@@ -1,63 +1,65 @@
---[[
-    Dungeon Quest Inventory QOL v18.6
-    --------------------------------
-    Client-side inventory utility layer with a native Dungeon Quest look.
+ 
 
-    V18 HIGHLIGHTS
-      • Authoritative inventory index now includes equipped gear even though
-        Dungeon Quest hides equipped items from the native inventory card list.
-      • Named UID loadout presets with preview, missing/level warnings, and
-        automatic Smart Junk / Auto Sell protection.
-      • Upgrade controls: reserve gold, per-operation spend cap, target upgrade
-        percentage, and per-slot weapon/chest/helmet selection.
-      • Best modes:
-          Best Now       = strongest current relevant stat
-          Best Potential = strongest max relevant stat
-          Best Budget    = strongest projected stat after individually-affordable
-                           upgrades under the configured spend budget
-        These are stat comparisons, not guaranteed DPS rankings.
-      • Duplicate comparison popup with current/potential stats, remaining
-        upgrades, estimated finish cost, protection state, and explicit ties.
-      • Equipable-only filter and Best actions never select above-level gear.
-      • Action progress strip + Stop button. Stop cancels subsequent requests;
-        it cannot undo a request already sent.
-      • Recent action log records requested vs confirmed upgrades/removals,
-        affected UIDs, and stop/error reasons.
-      • Auto Sell value protection threshold.
-      • Session loot summary for new drops, duplicate drops, and potential
-        improvements since the script started.
-      • Compact UI controls: hide badges, QOL tooltip text size, compact tooltip.
-      • Export/import of filters, favorites, locks, presets and QOL settings with
-        an import preview before changes are applied.
 
-    EXISTING V17 SAFETY BEHAVIOR RETAINED
-      • Server-backed reloadInvy/GetPlayerInvy is preferred for action validation.
-      • Counted upgrade requests only; no unbounded Spend All fallback.
-      • Upgrade/sell requests stop on stale inventory, gold, UID, or server-result
-        mismatches.
-      • Smart Junk marks only the true worst duplicate layer and never promotes a
-        protected copy when the true worst copy is protected.
-      • Equipped, favorite, locked, and saved-loadout items are protected.
 
-    COMPATIBILITY / COST ESTIMATES
-      The supplied cost recurrence and its fractional intermediate values are
-      preserved. Counted requests use:
-          upgradeItem(type, itemNumber, stat, amount)
-      without "spendAll". A rejected/unconfirmed request stops the action.
-      Estimated upgrade costs remain estimates until confirmed by the server.
 
-    UI changes are local. Equip, upgrade, and sell actions send game requests
-    that can change your actual equipment, inventory, and gold.
-]]
 
-----------------------------------------------------------------
--- Services / state
-----------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
+local StarterGui = game:GetService("StarterGui")
+local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -67,7 +69,7 @@ local CONTROLLER_KEY = "__DQ_INVENTORY_CLASS_SORTER_V1"
 local PERSIST_KEY = "__DQ_INVENTORY_QOL_PERSIST_V5"
 local SAVE_FILE = "DQ_Inventory_QOL_v5.json"
 
--- Stop v1-v4 / prior v5 instance.
+
 local old = ENV[CONTROLLER_KEY]
 if type(old) == "table" and type(old.Stop) == "function" then
     pcall(old.Stop, old)
@@ -79,6 +81,15 @@ if type(Persistent) ~= "table" then
         Favorites = {},
         Locked = {},
         Loadouts = {},
+        Wishlist = {},
+        KeepRules = {},
+        ItemNotes = {},
+        ItemTags = {},
+        SavedSearches = {},
+        SettingsProfiles = {},
+        ClassProfiles = {},
+        ItemFirstSeen = {},
+        LootHistory = {},
         KnownIDs = {},
         NewIDs = {},
         KnownInitialized = false,
@@ -86,7 +97,7 @@ if type(Persistent) ~= "table" then
         UIState = {
             ClassFilter = "",
             SearchText = "",
-            BestLoadout = false, -- legacy compatibility
+            BestLoadout = false, 
             BestMode = "Off",
             JunkOnly = false,
             PendingAutoUpgradeClass = "",
@@ -102,16 +113,45 @@ if type(Persistent) ~= "table" then
             MinLevel = 0,
 
             GoldReserve = 0,
-            SpendCap = 0, -- 0 = no cap
+            SpendCap = 0, 
             TargetUpgradePct = 100,
             UpgradeWeapon = true,
             UpgradeChest = true,
             UpgradeHelmet = true,
 
-            AutoSellMaxValue = 0, -- 0 = no sale-value protection threshold
+            AutoSellMaxValue = 0, 
             HideBadges = false,
             CompactTooltip = false,
             TooltipTextSize = 13,
+            KeepCopies = 1,
+            ProtectSRolls = true,
+            ProtectLegendary = true,
+            WishlistAutoLock = true,
+            InventoryCapacity = 300,
+            InventoryWarningPct = 90,
+            MinImprovementPct = 0,
+            MinImprovementFlat = 0,
+            RequireBetterNow = false,
+            HighValueWarning = 0,
+            HighSpendPct = 50,
+            AdvancedSearch = true,
+            AutoCleanupPrompt = true,
+            HideStatusBadge = false,
+            HideNewBadge = false,
+            HideUpgradeBadge = false,
+            HideProtectionBadge = false,
+            DropNotifications = true,
+            WishlistNotifications = true,
+            SRollNotifications = false,
+            LegendaryNotifications = false,
+            AutoExportSession = false,
+            ImportMode = "Replace",
+            GridScale = 100,
+            GridColumns = 0,
+            DropSoundId = "",
+            GoldMilestone = 0,
+            LootMilestone = 0,
+            QOLTab = "Overview",
         },
     }
     ENV[PERSIST_KEY] = Persistent
@@ -120,6 +160,15 @@ end
 Persistent.Favorites = Persistent.Favorites or {}
 Persistent.Locked = Persistent.Locked or {}
 Persistent.Loadouts = type(Persistent.Loadouts) == "table" and Persistent.Loadouts or {}
+Persistent.Wishlist = type(Persistent.Wishlist) == "table" and Persistent.Wishlist or {}
+Persistent.KeepRules = type(Persistent.KeepRules) == "table" and Persistent.KeepRules or {}
+Persistent.ItemNotes = type(Persistent.ItemNotes) == "table" and Persistent.ItemNotes or {}
+Persistent.ItemTags = type(Persistent.ItemTags) == "table" and Persistent.ItemTags or {}
+Persistent.SavedSearches = type(Persistent.SavedSearches) == "table" and Persistent.SavedSearches or {}
+Persistent.SettingsProfiles = type(Persistent.SettingsProfiles) == "table" and Persistent.SettingsProfiles or {}
+Persistent.ClassProfiles = type(Persistent.ClassProfiles) == "table" and Persistent.ClassProfiles or {}
+Persistent.ItemFirstSeen = type(Persistent.ItemFirstSeen) == "table" and Persistent.ItemFirstSeen or {}
+Persistent.LootHistory = type(Persistent.LootHistory) == "table" and Persistent.LootHistory or {}
 Persistent.KnownIDs = Persistent.KnownIDs or {}
 Persistent.NewIDs = Persistent.NewIDs or {}
 Persistent.KnownInitialized = Persistent.KnownInitialized == true
@@ -134,7 +183,7 @@ Persistent.UIState = Persistent.UIState or {
 Persistent.UIState.PendingAutoUpgradeClass =
     tostring(Persistent.UIState.PendingAutoUpgradeClass or "")
 
--- Migrate the old boolean Best toggle into the explicit v18 mode model.
+
 local savedBestMode = tostring(Persistent.UIState.BestMode or "")
 if savedBestMode ~= "Now"
     and savedBestMode ~= "Potential"
@@ -175,13 +224,42 @@ Persistent.Settings.TooltipTextSize = math.clamp(
     10,
     18
 )
+Persistent.Settings.KeepCopies = math.clamp(nonNegativeInteger and nonNegativeInteger(Persistent.Settings.KeepCopies, 1) or math.floor(tonumber(Persistent.Settings.KeepCopies) or 1), 1, 20)
+Persistent.Settings.ProtectSRolls = Persistent.Settings.ProtectSRolls ~= false
+Persistent.Settings.ProtectLegendary = Persistent.Settings.ProtectLegendary ~= false
+Persistent.Settings.WishlistAutoLock = Persistent.Settings.WishlistAutoLock ~= false
+Persistent.Settings.InventoryCapacity = math.max(1, math.floor(tonumber(Persistent.Settings.InventoryCapacity) or 300))
+Persistent.Settings.InventoryWarningPct = math.clamp(tonumber(Persistent.Settings.InventoryWarningPct) or 90, 1, 100)
+Persistent.Settings.MinImprovementPct = math.max(0, tonumber(Persistent.Settings.MinImprovementPct) or 0)
+Persistent.Settings.MinImprovementFlat = math.max(0, tonumber(Persistent.Settings.MinImprovementFlat) or 0)
+Persistent.Settings.RequireBetterNow = Persistent.Settings.RequireBetterNow == true
+Persistent.Settings.HighValueWarning = math.max(0, tonumber(Persistent.Settings.HighValueWarning) or 0)
+Persistent.Settings.HighSpendPct = math.clamp(tonumber(Persistent.Settings.HighSpendPct) or 50, 0, 100)
+Persistent.Settings.AdvancedSearch = Persistent.Settings.AdvancedSearch ~= false
+Persistent.Settings.AutoCleanupPrompt = Persistent.Settings.AutoCleanupPrompt ~= false
+Persistent.Settings.HideStatusBadge = Persistent.Settings.HideStatusBadge == true
+Persistent.Settings.HideNewBadge = Persistent.Settings.HideNewBadge == true
+Persistent.Settings.HideUpgradeBadge = Persistent.Settings.HideUpgradeBadge == true
+Persistent.Settings.HideProtectionBadge = Persistent.Settings.HideProtectionBadge == true
+Persistent.Settings.DropNotifications = Persistent.Settings.DropNotifications ~= false
+Persistent.Settings.WishlistNotifications = Persistent.Settings.WishlistNotifications ~= false
+Persistent.Settings.SRollNotifications = Persistent.Settings.SRollNotifications == true
+Persistent.Settings.LegendaryNotifications = Persistent.Settings.LegendaryNotifications == true
+Persistent.Settings.AutoExportSession = Persistent.Settings.AutoExportSession == true
+Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Merge" or "Replace"
+Persistent.Settings.GridScale = math.clamp(tonumber(Persistent.Settings.GridScale) or 100, 70, 140)
+Persistent.Settings.GridColumns = math.clamp(math.floor(tonumber(Persistent.Settings.GridColumns) or 0), 0, 12)
+Persistent.Settings.DropSoundId = tostring(Persistent.Settings.DropSoundId or "")
+Persistent.Settings.GoldMilestone = math.max(0, tonumber(Persistent.Settings.GoldMilestone) or 0)
+Persistent.Settings.LootMilestone = math.max(0, math.floor(tonumber(Persistent.Settings.LootMilestone) or 0))
+Persistent.Settings.QOLTab = tostring(Persistent.Settings.QOLTab or "Overview")
 
 local Controller = {
     Alive = true,
 
     ClassFilter = nil,
     SearchText = "",
-    BestLoadout = false, -- compatibility alias; true whenever BestMode ~= Off
+    BestLoadout = false, 
     BestMode = "Off",
     JunkOnly = false,
 
@@ -189,6 +267,23 @@ local Controller = {
     ActionCancelRequested = false,
     ActionProgressText = "Idle",
     ActionLog = {},
+    ActionQueue = {},
+    QueueRunning = false,
+    ReviewLootOnly = false,
+    CompareSelection = {},
+    PinnedUID = nil,
+    RecentlyEquippedUIDs = {},
+    RecentlyUpgradedUIDs = {},
+    RecentlySoldUIDs = {},
+    SessionStats = {Equipped = 0, Upgrades = 0, UpgradeGold = 0, Sold = 0, SellGold = 0},
+    SessionSnapshot = nil,
+    SessionSnapshotTime = nil,
+    LastCapacityWarningCount = -1,
+    LastGoldMilestone = nil,
+    LastLootMilestone = nil,
+    QueueStopRequested = false,
+    EquippedBadgeObjects = {},
+    EquippedConnections = {},
     PendingAutoUpgradeClass = nil,
     PendingAutoUpgradeRunning = false,
 
@@ -218,6 +313,7 @@ local Controller = {
     OriginalScrollSize = nil,
     OriginalScrollZIndex = nil,
     OriginalGridSortOrder = nil,
+    OriginalGridCellSize = nil,
     OriginalCardOrder = {},
 
     InventoryData = nil,
@@ -225,6 +321,7 @@ local Controller = {
     InventoryInfoByUID = {},
     CardInfo = {},
     HoveredCard = nil,
+    HoveredEquippedInfo = nil,
     TooltipExtra = nil,
     TooltipNativeState = {},
     BestByClassSlot = {},
@@ -243,9 +340,9 @@ local Controller = {
 
 ENV[CONTROLLER_KEY] = Controller
 
-----------------------------------------------------------------
--- Optional on-disk persistence
-----------------------------------------------------------------
+
+
+
 
 local function canReadFiles()
     return type(isfile) == "function" and type(readfile) == "function"
@@ -284,6 +381,15 @@ local function loadDiskState()
     if type(data.Loadouts) == "table" then
         Persistent.Loadouts = data.Loadouts
     end
+    if type(data.Wishlist) == "table" then Persistent.Wishlist = data.Wishlist end
+    if type(data.KeepRules) == "table" then Persistent.KeepRules = data.KeepRules end
+    if type(data.ItemNotes) == "table" then Persistent.ItemNotes = data.ItemNotes end
+    if type(data.ItemTags) == "table" then Persistent.ItemTags = data.ItemTags end
+    if type(data.SavedSearches) == "table" then Persistent.SavedSearches = data.SavedSearches end
+    if type(data.SettingsProfiles) == "table" then Persistent.SettingsProfiles = data.SettingsProfiles end
+    if type(data.ClassProfiles) == "table" then Persistent.ClassProfiles = data.ClassProfiles end
+    if type(data.ItemFirstSeen) == "table" then Persistent.ItemFirstSeen = data.ItemFirstSeen end
+    if type(data.LootHistory) == "table" then Persistent.LootHistory = data.LootHistory end
     if type(data.Settings) == "table" then
         for key, value in pairs(data.Settings) do
             Persistent.Settings[key] = value
@@ -307,6 +413,15 @@ local function loadDiskState()
     end
 
     Persistent.Loadouts = type(Persistent.Loadouts) == "table" and Persistent.Loadouts or {}
+    Persistent.Wishlist = type(Persistent.Wishlist) == "table" and Persistent.Wishlist or {}
+    Persistent.KeepRules = type(Persistent.KeepRules) == "table" and Persistent.KeepRules or {}
+    Persistent.ItemNotes = type(Persistent.ItemNotes) == "table" and Persistent.ItemNotes or {}
+    Persistent.ItemTags = type(Persistent.ItemTags) == "table" and Persistent.ItemTags or {}
+    Persistent.SavedSearches = type(Persistent.SavedSearches) == "table" and Persistent.SavedSearches or {}
+    Persistent.SettingsProfiles = type(Persistent.SettingsProfiles) == "table" and Persistent.SettingsProfiles or {}
+    Persistent.ClassProfiles = type(Persistent.ClassProfiles) == "table" and Persistent.ClassProfiles or {}
+    Persistent.ItemFirstSeen = type(Persistent.ItemFirstSeen) == "table" and Persistent.ItemFirstSeen or {}
+    Persistent.LootHistory = type(Persistent.LootHistory) == "table" and Persistent.LootHistory or {}
     Persistent.UIState = Persistent.UIState or {
         ClassFilter = "",
         SearchText = "",
@@ -339,8 +454,37 @@ local function loadDiskState()
     Persistent.Settings.AutoSellMaxValue =
         math.max(0, tonumber(Persistent.Settings.AutoSellMaxValue) or 0)
     Persistent.Settings.TooltipTextSize = math.clamp(
-        math.floor(tonumber(Persistent.Settings.TooltipTextSize) or 13), 10, 18
+        math.floor(tonumber(Persistent.Settings.TooltipTextSize) or 13), 10, 22
     )
+    Persistent.Settings.KeepCopies = math.clamp(math.floor(tonumber(Persistent.Settings.KeepCopies) or 1), 1, 20)
+    Persistent.Settings.ProtectSRolls = Persistent.Settings.ProtectSRolls ~= false
+    Persistent.Settings.ProtectLegendary = Persistent.Settings.ProtectLegendary ~= false
+    Persistent.Settings.WishlistAutoLock = Persistent.Settings.WishlistAutoLock ~= false
+    Persistent.Settings.InventoryCapacity = math.max(1, math.floor(tonumber(Persistent.Settings.InventoryCapacity) or 300))
+    Persistent.Settings.InventoryWarningPct = math.clamp(tonumber(Persistent.Settings.InventoryWarningPct) or 90, 1, 100)
+    Persistent.Settings.MinImprovementPct = math.max(0, tonumber(Persistent.Settings.MinImprovementPct) or 0)
+    Persistent.Settings.MinImprovementFlat = math.max(0, tonumber(Persistent.Settings.MinImprovementFlat) or 0)
+    Persistent.Settings.RequireBetterNow = Persistent.Settings.RequireBetterNow == true
+    Persistent.Settings.HighValueWarning = math.max(0, tonumber(Persistent.Settings.HighValueWarning) or 0)
+    Persistent.Settings.HighSpendPct = math.clamp(tonumber(Persistent.Settings.HighSpendPct) or 50, 0, 100)
+    Persistent.Settings.AdvancedSearch = Persistent.Settings.AdvancedSearch ~= false
+    Persistent.Settings.AutoCleanupPrompt = Persistent.Settings.AutoCleanupPrompt ~= false
+    Persistent.Settings.HideStatusBadge = Persistent.Settings.HideStatusBadge == true
+    Persistent.Settings.HideNewBadge = Persistent.Settings.HideNewBadge == true
+    Persistent.Settings.HideUpgradeBadge = Persistent.Settings.HideUpgradeBadge == true
+    Persistent.Settings.HideProtectionBadge = Persistent.Settings.HideProtectionBadge == true
+    Persistent.Settings.DropNotifications = Persistent.Settings.DropNotifications ~= false
+    Persistent.Settings.WishlistNotifications = Persistent.Settings.WishlistNotifications ~= false
+    Persistent.Settings.SRollNotifications = Persistent.Settings.SRollNotifications == true
+    Persistent.Settings.LegendaryNotifications = Persistent.Settings.LegendaryNotifications == true
+    Persistent.Settings.AutoExportSession = Persistent.Settings.AutoExportSession == true
+    Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Merge" or "Replace"
+    Persistent.Settings.GridScale = math.clamp(tonumber(Persistent.Settings.GridScale) or 100, 70, 140)
+    Persistent.Settings.GridColumns = math.clamp(math.floor(tonumber(Persistent.Settings.GridColumns) or 0), 0, 12)
+    Persistent.Settings.DropSoundId = tostring(Persistent.Settings.DropSoundId or "")
+    Persistent.Settings.GoldMilestone = math.max(0, tonumber(Persistent.Settings.GoldMilestone) or 0)
+    Persistent.Settings.LootMilestone = math.max(0, math.floor(tonumber(Persistent.Settings.LootMilestone) or 0))
+    Persistent.Settings.QOLTab = tostring(Persistent.Settings.QOLTab or "Overview")
 end
 
 
@@ -352,7 +496,7 @@ local function saveDiskState()
     Persistent.UIState = {
         ClassFilter = Controller.ClassFilter or "",
         SearchText = tostring(Controller.SearchText or ""),
-        BestLoadout = Controller.BestMode ~= "Off", -- legacy field for downgrade compatibility
+        BestLoadout = Controller.BestMode ~= "Off", 
         BestMode = Controller.BestMode or "Off",
         JunkOnly = Controller.JunkOnly == true,
         PendingAutoUpgradeClass =
@@ -363,6 +507,15 @@ local function saveDiskState()
         Favorites = Persistent.Favorites,
         Locked = Persistent.Locked,
         Loadouts = Persistent.Loadouts,
+        Wishlist = Persistent.Wishlist,
+        KeepRules = Persistent.KeepRules,
+        ItemNotes = Persistent.ItemNotes,
+        ItemTags = Persistent.ItemTags,
+        SavedSearches = Persistent.SavedSearches,
+        SettingsProfiles = Persistent.SettingsProfiles,
+        ClassProfiles = Persistent.ClassProfiles,
+        ItemFirstSeen = Persistent.ItemFirstSeen,
+        LootHistory = Persistent.LootHistory,
         Settings = Persistent.Settings,
         UIState = Persistent.UIState,
         KnownIDs = Persistent.KnownIDs,
@@ -377,8 +530,8 @@ local function saveDiskState()
 end
 
 
--- Bulk reward drops may discover several NEW items in the same few frames.
--- Coalesce those persistence writes into one JSON write.
+
+
 local diskSaveGeneration = 0
 
 local function scheduleDiskStateSave(delaySeconds)
@@ -394,14 +547,14 @@ end
 
 loadDiskState()
 
--- v15 migration: the old "Potential %" sort meant current-stat/max-stat.
--- It now becomes the much clearer actual upgrade-progress percentage.
+
+
 if Persistent.Settings.SortMode == "Potential %" then
     Persistent.Settings.SortMode = "Upgrade %"
     saveDiskState()
 end
 
--- Restore the meaningful UI state after reading the persistent file.
+
 do
     local saved = Persistent.UIState or {}
 
@@ -442,9 +595,9 @@ do
 end
 
 
-----------------------------------------------------------------
--- Place awareness
-----------------------------------------------------------------
+
+
+
 
 local PlaceManager = nil
 
@@ -468,7 +621,7 @@ local function getDQPlaceName()
         end
     end
 
-    -- Live fallbacks from Dungeon Quest's own PlaceManager mapping.
+    
     if game.PlaceId == 85776757589518 then
         return "Level"
     elseif game.PlaceId == 77649408247578 then
@@ -482,9 +635,9 @@ local function isUpgradeCapablePlace()
     return getDQPlaceName() == "Lobby"
 end
 
-----------------------------------------------------------------
--- Generic helpers
-----------------------------------------------------------------
+
+
+
 
 local function disconnectAll(list)
     for i = #list, 1, -1 do
@@ -585,9 +738,9 @@ local function isItemEquipped(item)
     return false
 end
 
-----------------------------------------------------------------
--- Inventory data discovery
-----------------------------------------------------------------
+
+
+
 
 local DATA_TABLE_NAMES = {
     "weapons",
@@ -739,9 +892,9 @@ local function findInventoryDataFromModule()
 end
 
 local function refreshInventoryData()
-    -- Always prefer Dungeon Quest's current server-backed inventory.
-    -- GetPlayerInvy() is just reloadInvy:InvokeServer(), so unlike getgc()
-    -- it cannot accidentally select an older inventory snapshot.
+    
+    
+    
     local found = findInventoryDataFromModule()
 
     if not found then
@@ -783,8 +936,8 @@ local function seedKnownIDs()
     local changed = false
 
     if Persistent.KnownInitialized then
-        -- Returning session: anything present now that wasn't previously known
-        -- is a new item, even if it was obtained while this script was not running.
+        
+        
         iterateInventoryRecords(function(_, _, item)
             local uid = uidForItem(item)
             if uid and not Persistent.KnownIDs[uid] then
@@ -794,8 +947,8 @@ local function seedKnownIDs()
             end
         end)
     else
-        -- First installation: seed the current inventory as known so the whole
-        -- pre-existing inventory does not light up as NEW.
+        
+        
         iterateInventoryRecords(function(_, _, item)
             local uid = uidForItem(item)
             if uid and not Persistent.KnownIDs[uid] then
@@ -815,9 +968,9 @@ local function seedKnownIDs()
     end
 end
 
-----------------------------------------------------------------
--- Item lookup / class / potential
-----------------------------------------------------------------
+
+
+
 
 local function getCardIdentity(card)
     if not card or not card.Parent then
@@ -1037,7 +1190,7 @@ local function potentialAfterUpgrades(currentStat, count)
         if gain >= 10 then
             return math.floor(value + count * 10)
         end
-        -- Defensive fast path for invalid negative stats, whose gain stays 1.
+        
         if value < 0 then
             local amount = math.min(count, math.ceil(-value))
             value = value + amount
@@ -1076,7 +1229,7 @@ local function formatUpgradeProgress(current, maximum, decimals)
     if value <= 0 then
         return "<" .. string.format(format, 1 / scale)
     end
-    -- Prevent either binary floating-point or display rounding reaching 100.
+    
     return string.format(format, math.min(value, 100 - 1 / scale))
 end
 
@@ -1123,11 +1276,11 @@ local function assignDuplicateGrades(list)
     end
 end
 
--- Estimated blacksmith upgrade costs, using the supplied recurrence.
--- Intermediate runningCost fractions are intentionally retained. Changing
--- floor placement without a verified server reference would invent a rule.
--- v9 precomputes the complete non-capped range ONCE. After that,
--- calculateUpgradeCost() and totalUpgradeCost() are O(1).
+
+
+
+
+
 local UPGRADE_COST = {}
 local UPGRADE_PREFIX = {[0] = 0}
 
@@ -1181,7 +1334,7 @@ local function totalUpgradeCost(item)
 
     local total = 0
 
-    -- Sum cost indices current..min(maximum-1, 466) with one prefix lookup.
+    
     local formulaStopExclusive = math.min(maximum, 467)
 
     if current < formulaStopExclusive then
@@ -1190,7 +1343,7 @@ local function totalUpgradeCost(item)
             - (UPGRADE_PREFIX[current] or 0)
     end
 
-    -- Every upgrade from index 467 onward costs exactly 100,000.
+    
     local cappedStart = math.max(current, 467)
 
     if maximum > cappedStart then
@@ -1200,8 +1353,8 @@ local function totalUpgradeCost(item)
     return total
 end
 
--- Estimated gold cost for purchasing `count` upgrades from an item's
--- current upgrade level. This stays O(1).
+
+
 local function upgradeCostForCount(item, count)
     if type(item) ~= "table" then
         return 0
@@ -1237,8 +1390,8 @@ local function upgradeCostForCount(item, count)
     return total
 end
 
--- Finds the maximum number of upgrades that can be purchased with the
--- supplied gold budget. Binary search keeps this O(log remaining).
+
+
 local function maxAffordableUpgradeCount(item, goldBudget)
     if type(item) ~= "table" then
         return 0, 0
@@ -1251,13 +1404,13 @@ local function maxAffordableUpgradeCount(item, goldBudget)
         return 0, 0
     end
 
-    -- Fast path: enough gold to finish the item.
+    
     local fullCost = upgradeCostForCount(item, remaining)
     if fullCost <= goldBudget then
         return remaining, fullCost
     end
 
-    -- Not even one upgrade is affordable.
+    
     local firstCost = upgradeCostForCount(item, 1)
     if firstCost > goldBudget then
         return 0, 0
@@ -1282,9 +1435,9 @@ local function maxAffordableUpgradeCount(item, goldBudget)
     return best, upgradeCostForCount(item, best)
 end
 
--- Marginal raw-stat allocation. Capped +10 gains have nondecreasing prices,
--- so selecting the cheapest available next upgrade maximizes upgrade count.
--- Variable low-stat gains use a marginal heuristic, not a global optimum claim.
+
+
+
 local function allocateUpgradeBudget(entries, goldBudget)
     local budget = nonNegativeInteger(goldBudget)
     local states = {}
@@ -1461,9 +1614,9 @@ local function slotForType(itemType)
     return nil
 end
 
-----------------------------------------------------------------
--- Unified inventory helpers (v18)
-----------------------------------------------------------------
+
+
+
 
 local function itemNumberFromKey(itemType, key)
     local typeInfo = TYPE_INFO[itemType]
@@ -1510,6 +1663,35 @@ local function configuredSpendBudget(gold)
     return available
 end
 
+local function detectInventoryCapacity()
+    local gui = Controller.CurrentGui
+    local count = #(Controller.InventoryInfos or {})
+    if gui then
+        local bestMax
+        for _, obj in ipairs(gui:GetDescendants()) do
+            if obj:IsA("TextLabel") then
+                local a, b = tostring(obj.Text):match("^%s*([%d,]+)%s*/%s*([%d,]+)%s*$")
+                if a and b then
+                    local current = tonumber((a:gsub(",", "")))
+                    local maximum = tonumber((b:gsub(",", "")))
+                    if current and maximum and maximum >= count and maximum <= 2000 and current <= maximum then
+                        if not bestMax or maximum < bestMax then bestMax = maximum end
+                    end
+                end
+            end
+        end
+        if bestMax then Persistent.Settings.InventoryCapacity = bestMax end
+    end
+    return math.max(1, nonNegativeInteger(Persistent.Settings.InventoryCapacity, 300))
+end
+
+local function inventoryCapacityText()
+    local count = #(Controller.InventoryInfos or {})
+    local capacity = detectInventoryCapacity()
+    local pct = count / math.max(1, capacity) * 100
+    return count, capacity, pct
+end
+
 local function uidInAnyLoadout(uid)
     if not uid then
         return false
@@ -1541,9 +1723,89 @@ local function slotUpgradeEnabled(slot)
     return false
 end
 
-----------------------------------------------------------------
--- Card metrics
-----------------------------------------------------------------
+local function wishlistKey(name)
+    return lower(name):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function isWishlistName(name)
+    local key = wishlistKey(name)
+    return key ~= "" and Persistent.Wishlist[key] ~= nil
+end
+
+local function keepCopiesForName(name)
+    local key = wishlistKey(name)
+    local specific = tonumber(Persistent.KeepRules[key])
+    if specific then return math.clamp(math.floor(specific), 1, 20) end
+    return math.max(1, math.floor(tonumber(Persistent.Settings.KeepCopies) or 1))
+end
+
+local function qolNotify(titleText, bodyText)
+    if not Persistent.Settings.DropNotifications then return end
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = tostring(titleText or "Dungeon Quest QOL"),
+            Text = tostring(bodyText or ""),
+            Duration = 5,
+        })
+    end)
+    local raw = tostring(Persistent.Settings.DropSoundId or "")
+    local digits = raw:match("(%d+)")
+    if digits then
+        pcall(function()
+            local sound = Instance.new("Sound")
+            sound.SoundId = "rbxassetid://" .. digits
+            sound.Volume = 0.8
+            sound.Parent = SoundService
+            sound:Play()
+            game:GetService("Debris"):AddItem(sound, 8)
+        end)
+    end
+end
+
+local function protectionReasons(info)
+    local reasons = {}
+    if not info then return reasons end
+    if info.IsEquipped then reasons[#reasons + 1] = "Equipped" end
+    if info.UID and Persistent.Favorites[info.UID] then reasons[#reasons + 1] = "Favorite" end
+    if info.UID and Persistent.Locked[info.UID] then reasons[#reasons + 1] = "Locked" end
+    if info.IsLoadoutProtected then reasons[#reasons + 1] = "Loadout" end
+    if info.IsWishlist then reasons[#reasons + 1] = "Wishlist" end
+    if Persistent.Settings.ProtectSRolls and info.RollGrade == "S" then reasons[#reasons + 1] = "S Roll" end
+    if Persistent.Settings.ProtectLegendary and (info.RarityRank or 0) >= (RARITY_RANK.legendary or 5) then reasons[#reasons + 1] = "Legendary+" end
+    return reasons
+end
+
+local function isProtectedInfo(info)
+    return #protectionReasons(info) > 0
+end
+
+local function breakEvenUpgradeInfo(info, targetValue)
+    if not info or not info.Field or (info.RemainingUpgrades or 0) <= 0 then
+        return nil, nil
+    end
+    local start = tonumber(info.Current) or 0
+    targetValue = tonumber(targetValue) or 0
+    if start > targetValue then
+        return 0, 0
+    end
+    local lo, hi, best = 1, info.RemainingUpgrades, nil
+    while lo <= hi do
+        local mid = math.floor((lo + hi) / 2)
+        local value = potentialAfterUpgrades(start, mid) or start
+        if value > targetValue then
+            best = mid
+            hi = mid - 1
+        else
+            lo = mid + 1
+        end
+    end
+    if not best then return nil, nil end
+    return best, upgradeCostForCount(info.Item, best)
+end
+
+
+
+
 
 local function findEquippedBySlot()
     local equipped = {}
@@ -1569,7 +1831,7 @@ local function findEquippedBySlot()
 end
 
 local function copyMetricFields(target, source)
-    -- Keep the target table identity because card signal closures capture it.
+    
     local card = target.Card
     for key in pairs(target) do
         if key ~= "Card" then
@@ -1607,9 +1869,9 @@ local function rebuildMetrics()
         local uid = uidForItem(item)
         local itemNumber = itemNumberFromKey(itemType, key)
 
-        -- Equipped gear is present in reloadInvy even though Dungeon Quest omits
-        -- its card from the native inventory GUI. Reuse a card-backed info table
-        -- when one exists; otherwise create a virtual info record.
+        
+        
+        
         local info = uid and existingByUID[uid] or nil
         if not info then
             info = {}
@@ -1684,6 +1946,16 @@ local function rebuildMetrics()
         info.BestDuplicate = false
         info.IsJunk = false
         info.IsLoadoutProtected = uid and uidInAnyLoadout(uid) or false
+        info.IsWishlist = isWishlistName(info.Name)
+        if uid and not Persistent.ItemFirstSeen[uid] then
+            Persistent.ItemFirstSeen[uid] = os.time()
+        end
+        info.FirstSeen = uid and tonumber(Persistent.ItemFirstSeen[uid]) or 0
+        info.Note = uid and tostring(Persistent.ItemNotes[uid] or "") or ""
+        info.CustomTag = uid and tostring(Persistent.ItemTags[uid] or "") or ""
+        if info.IsWishlist and uid and Persistent.Settings.WishlistAutoLock then
+            Persistent.Locked[uid] = true
+        end
 
         allInfos[#allInfos + 1] = info
         if uid then
@@ -1709,7 +1981,7 @@ local function rebuildMetrics()
     Controller.InventoryInfos = allInfos
     Controller.InventoryInfoByUID = byUID
 
-    -- Equipped comparison must be built from the full server inventory, not cards.
+    
     local equippedInfo = {}
     for _, info in ipairs(allInfos) do
         local slot = slotForType(info.ItemType)
@@ -1735,47 +2007,61 @@ local function rebuildMetrics()
             if not info.IsEquipped and (info.Potential or 0) > eqPotential then
                 info.BetterThanEquipped = true
             end
+            local base = math.max(1, math.abs(eqCurrent))
+            info.CurrentChangePct = ((info.Current or 0) - eqCurrent) / base * 100
+            info.PotentialChangePct = ((info.Potential or 0) - eqPotential) / math.max(1, math.abs(eqPotential)) * 100
+            info.IsSidegrade = not info.IsEquipped and math.abs(info.CurrentChangePct or 0) < 0.5 and math.abs(info.PotentialChangePct or 0) < 0.5
+            info.IsDowngradeNow = not info.IsEquipped and (info.Current or 0) < eqCurrent
+            info.BreakEvenCount, info.BreakEvenCost = breakEvenUpgradeInfo(info, eqCurrent)
         end
+        info.ProtectionReasons = protectionReasons(info)
+        info.IsProtected = #info.ProtectionReasons > 0
     end
 
     for _, list in pairs(groups) do
         assignDuplicateGrades(list)
-    end
-
-    -- Smart Junk works from the full authoritative inventory, including the
-    -- equipped copy that has no native card. This prevents an equipped best copy
-    -- from being "invisible" to duplicate ranking.
-    for _, list in pairs(junkGroups) do
-        if #list > 1 then
-            table.sort(list, function(a, b)
-                if a.Potential ~= b.Potential then
-                    return a.Potential < b.Potential
-                end
-                if a.Current ~= b.Current then
-                    return a.Current < b.Current
-                end
-                if a.RarityRank ~= b.RarityRank then
-                    return a.RarityRank < b.RarityRank
-                end
-                if a.Level ~= b.Level then
-                    return a.Level < b.Level
-                end
-                return (a.ItemNumber or math.huge) < (b.ItemNumber or math.huge)
-            end)
-
-            local worst = list[1]
-            local protected =
-                worst.IsEquipped
-                or (worst.UID and Persistent.Favorites[worst.UID] == true)
-                or (worst.UID and Persistent.Locked[worst.UID] == true)
-                or worst.IsLoadoutProtected
-
-            -- Preserve v17 semantics: if the true worst copy is protected,
-            -- another copy is not promoted to JUNK.
-            if not protected then
-                worst.IsJunk = true
+        local total = #list
+        for index, info in ipairs(list) do
+            if total <= 1 then
+                info.RollPercentile = 100
+            else
+                info.RollPercentile = math.floor(((total - index) / (total - 1)) * 100 + 0.5)
             end
         end
+    end
+
+    for _, list in pairs(junkGroups) do
+        local keepCopies = keepCopiesForName(list[1] and list[1].Name or "")
+        if #list > keepCopies then
+            table.sort(list, function(a, b)
+                if a.Potential ~= b.Potential then return a.Potential > b.Potential end
+                if a.Current ~= b.Current then return a.Current > b.Current end
+                if a.RarityRank ~= b.RarityRank then return a.RarityRank > b.RarityRank end
+                if a.Level ~= b.Level then return a.Level > b.Level end
+                return (a.ItemNumber or math.huge) < (b.ItemNumber or math.huge)
+            end)
+            local kept = {}
+            for index = 1, math.min(keepCopies, #list) do
+                kept[list[index]] = true
+            end
+            local worstCandidate = nil
+            for index = #list, 1, -1 do
+                local candidate = list[index]
+                if not kept[candidate] and not isProtectedInfo(candidate) then
+                    worstCandidate = candidate
+                    break
+                end
+            end
+            if worstCandidate then
+                worstCandidate.IsJunk = true
+                worstCandidate.JunkReason = "Outside top " .. tostring(keepCopies) .. " copies"
+            end
+        end
+    end
+
+    for _, info in ipairs(allInfos) do
+        info.ProtectionReasons = protectionReasons(info)
+        info.IsProtected = #info.ProtectionReasons > 0
     end
 
     local function betterForMode(candidate, currentBest, mode)
@@ -1845,8 +2131,8 @@ local function rebuildMetrics()
         end
     end
 
-    -- Session loot baseline/snapshot. This is independent of the persistent NEW
-    -- badge, so hovering a card does not erase the session summary.
+    
+    
     if not Controller.SessionBaselineReady then
         for _, info in ipairs(allInfos) do
             if info.UID then
@@ -1869,26 +2155,50 @@ local function rebuildMetrics()
                     improvement = (info.Potential or 0) > eqPotential
                 end
 
-                Controller.SessionLootDrops[info.UID] = {
+                local drop = {
                     UID = info.UID,
                     Name = info.Name,
                     ItemType = info.ItemType,
                     Class = info.Class,
+                    Rarity = info.Rarity,
+                    RollGrade = info.RollGrade,
                     Current = info.Current,
                     Potential = info.Potential,
                     IsDuplicate = (info.DuplicateCount or 1) > 1,
                     IsImprovement = improvement,
+                    IsWishlist = info.IsWishlist == true,
                     AcquiredAt = os.time(),
                 }
+                Controller.SessionLootDrops[info.UID] = drop
+                table.insert(Persistent.LootHistory, 1, drop)
+                while #Persistent.LootHistory > 100 do table.remove(Persistent.LootHistory) end
+                scheduleDiskStateSave(0.35)
+                if info.IsWishlist and Persistent.Settings.WishlistNotifications then
+                    qolNotify("Wishlist Drop", tostring(info.Name) .. " • " .. tostring(info.RollGrade or info.Rarity or "drop"))
+                elseif info.RollGrade == "S" and Persistent.Settings.SRollNotifications then
+                    qolNotify("S-Roll Drop", tostring(info.Name))
+                elseif (info.RarityRank or 0) >= (RARITY_RANK.legendary or 5) and Persistent.Settings.LegendaryNotifications then
+                    qolNotify("Legendary+ Drop", tostring(info.Name))
+                elseif improvement and Persistent.Settings.DropNotifications then
+                    qolNotify("Potential Improvement", tostring(info.Name) .. " • " .. formatCompact(info.Potential or 0))
+                end
             end
         end
+    end
+
+    local count, capacity, pct = inventoryCapacityText()
+    if pct >= (tonumber(Persistent.Settings.InventoryWarningPct) or 90)
+        and Controller.LastCapacityWarningCount ~= count
+    then
+        Controller.LastCapacityWarningCount = count
+        qolNotify("Inventory Capacity", tostring(count) .. "/" .. tostring(capacity) .. " slots used (" .. string.format("%.0f%%", pct) .. ")")
     end
 end
 
 
-----------------------------------------------------------------
--- Filtering / sorting
-----------------------------------------------------------------
+
+
+
 
 local SORT_MODES = {
     "Highest Pot",
@@ -1901,6 +2211,10 @@ local SORT_MODES = {
     "Rarity",
     "Level",
     "Upgrades",
+    "Roll Percentile",
+    "Recently Acquired",
+    "Recently Upgraded",
+    "Recently Equipped",
     "Name",
 }
 
@@ -1925,6 +2239,7 @@ local function hasVisibilityFilter()
         or (tonumber(Persistent.Settings.MinLevel) or 0) > 0
         or Controller.BestMode ~= "Off"
         or Controller.JunkOnly
+        or Controller.ReviewLootOnly
 end
 
 local function searchMatches(info)
@@ -1932,7 +2247,75 @@ local function searchMatches(info)
         return true
     end
 
-    local needle = lower(Controller.SearchText)
+    local query = lower(Controller.SearchText)
+    if not Persistent.Settings.AdvancedSearch then
+        local haystack = table.concat({
+            info.NameLower or "",
+            info.Rarity or "",
+            lower(info.Class),
+            lower(info.ItemType),
+            info.IsJunk and "junk" or "",
+            info.IsEquipped and "equipped" or "",
+            info.IsLoadoutProtected and "loadout preset" or "",
+            info.IsWishlist and "wishlist" or "",
+            info.RollGrade and lower(info.RollGrade) or "",
+            info.CustomTag and lower(info.CustomTag) or "",
+        }, " ")
+        return string.find(haystack, query, 1, true) ~= nil
+    end
+
+    local plain = {}
+    local function boolValue(v)
+        v = lower(v)
+        return v == "true" or v == "1" or v == "yes" or v == "on"
+    end
+
+    for token in string.gmatch(query, "%S+") do
+        local key, value = token:match("^([%w_]+):(.+)$")
+        if key then
+            if key == "rarity" and info.Rarity ~= value then return false end
+            if key == "type" and lower(info.ItemType) ~= value then return false end
+            if key == "class" and lower(info.Class) ~= value then return false end
+            if key == "roll" and lower(info.RollGrade or "") ~= value then return false end
+            if key == "uid" and not string.find(lower(info.UID or ""), value, 1, true) then return false end
+            if key == "tag" and not string.find(lower(info.CustomTag or ""), value, 1, true) then return false end
+            if key == "level" and nonNegativeInteger(info.Level) ~= nonNegativeInteger(value) then return false end
+            if key == "minlevel" and nonNegativeInteger(info.Level) < nonNegativeInteger(value) then return false end
+            if key == "maxlevel" and nonNegativeInteger(info.Level) > nonNegativeInteger(value) then return false end
+            if key == "new" and ((info.UID and Persistent.NewIDs[info.UID]) == true) ~= boolValue(value) then return false end
+            if key == "equipped" and (info.IsEquipped == true) ~= boolValue(value) then return false end
+            if key == "locked" and ((info.UID and Persistent.Locked[info.UID]) == true) ~= boolValue(value) then return false end
+            if key == "favorite" and ((info.UID and Persistent.Favorites[info.UID]) == true) ~= boolValue(value) then return false end
+            if key == "wishlist" and (info.IsWishlist == true) ~= boolValue(value) then return false end
+            if key == "junk" and (info.IsJunk == true) ~= boolValue(value) then return false end
+            if key == "loadout" and (info.IsLoadoutProtected == true) ~= boolValue(value) then return false end
+            if key == "protected" and (info.IsProtected == true) ~= boolValue(value) then return false end
+            if key == "improvement" and (info.BetterThanEquipped == true) ~= boolValue(value) then return false end
+        else
+            local opKey, op, raw = token:match("^([%w_]+)([<>]=?)(%-?[%d%.]+)$")
+            if opKey then
+                local left
+                if opKey == "stat" or opKey == "current" then left = tonumber(info.Current) or 0 end
+                if opKey == "pot" or opKey == "potential" then left = tonumber(info.Potential) or 0 end
+                if opKey == "sell" or opKey == "value" then left = tonumber(info.SellValue) or 0 end
+                if opKey == "upgrade" then left = tonumber(info.UpgradePct) or 0 end
+                if opKey == "roi" then left = tonumber(info.GainPerGold) or 0 end
+                if left ~= nil then
+                    local right = tonumber(raw) or 0
+                    if op == ">" and not (left > right) then return false end
+                    if op == ">=" and not (left >= right) then return false end
+                    if op == "<" and not (left < right) then return false end
+                    if op == "<=" and not (left <= right) then return false end
+                else
+                    plain[#plain + 1] = token
+                end
+            else
+                plain[#plain + 1] = token
+            end
+        end
+    end
+
+    if #plain == 0 then return true end
     local haystack = table.concat({
         info.NameLower or "",
         info.Rarity or "",
@@ -1941,9 +2324,15 @@ local function searchMatches(info)
         info.IsJunk and "junk" or "",
         info.IsEquipped and "equipped" or "",
         info.IsLoadoutProtected and "loadout preset" or "",
+        info.IsWishlist and "wishlist" or "",
+        info.RollGrade and lower(info.RollGrade) or "",
+        info.CustomTag and lower(info.CustomTag) or "",
+        info.Note and lower(info.Note) or "",
     }, " ")
-
-    return string.find(haystack, needle, 1, true) ~= nil
+    for _, word in ipairs(plain) do
+        if not string.find(haystack, word, 1, true) then return false end
+    end
+    return true
 end
 
 local function shouldInfoBeVisible(info)
@@ -1993,6 +2382,10 @@ local function shouldInfoBeVisible(info)
     end
 
     if Controller.JunkOnly and not info.IsJunk then
+        return false
+    end
+
+    if Controller.ReviewLootOnly and not (info.UID and Controller.SessionLootDrops[info.UID]) then
         return false
     end
 
@@ -2059,6 +2452,14 @@ local function sortValue(info)
         return info.Level or 0
     elseif mode == "Upgrades" then
         return info.CurrentUpgrade or 0
+    elseif mode == "Roll Percentile" then
+        return info.RollPercentile or 0
+    elseif mode == "Recently Acquired" then
+        return (info.UID and Controller.SessionLootDrops[info.UID] and Controller.SessionLootDrops[info.UID].AcquiredAt) or info.FirstSeen or 0
+    elseif mode == "Recently Upgraded" then
+        return (info.UID and Controller.RecentlyUpgradedUIDs[info.UID]) or 0
+    elseif mode == "Recently Equipped" then
+        return (info.UID and Controller.RecentlyEquippedUIDs[info.UID]) or 0
     end
 
     return 0
@@ -2080,14 +2481,14 @@ local function sortCards()
         local ai = a.Info
         local bi = b.Info
 
-        -- Favorites always pin first.
+        
         local af = ai.UID and Persistent.Favorites[ai.UID] == true or false
         local bf = bi.UID and Persistent.Favorites[bi.UID] == true or false
         if af ~= bf then
             return af
         end
 
-        -- Locked items next, so protected pieces stay easy to find.
+        
         local al = ai.UID and Persistent.Locked[ai.UID] == true or false
         local bl = bi.UID and Persistent.Locked[bi.UID] == true or false
         if al ~= bl then
@@ -2095,7 +2496,7 @@ local function sortCards()
         end
 
         if Controller.ClassFilter == "Skills" then
-            -- Skills always sort by required level, highest first.
+            
             if ai.ItemType == "ability" and bi.ItemType ~= "ability" then
                 return true
             elseif ai.ItemType ~= "ability" and bi.ItemType == "ability" then
@@ -2134,7 +2535,7 @@ local function sortCards()
 
                 if av ~= bv then
                     if mode == "Upgrade Cost" then
-                        -- Cheapest-to-finish first.
+                        
                         return av < bv
                     end
 
@@ -2169,9 +2570,9 @@ local function sortCards()
     end
 end
 
-----------------------------------------------------------------
--- Native UI primitives
-----------------------------------------------------------------
+
+
+
 
 local NATIVE_ROUND_IMAGE = "rbxassetid://2512840830"
 
@@ -2251,7 +2652,7 @@ local function makeNativeButton(parent, config)
     button.ZIndex = zIndex
     button.Parent = parent
 
-    -- Dungeon Quest-style inset button: dark shell + recessed colored face.
+    
     local outer = makeSquarePlate(
         button,
         "DQOuter",
@@ -2283,8 +2684,8 @@ local function makeNativeButton(parent, config)
     constraint.MaxTextSize = config.MaxTextSize or 18
     constraint.Parent = button
 
-    -- Native-feeling hover/press feedback.  Only the fixed dark shell and
-    -- face position animate, so toggle code is free to recolor DQInner safely.
+    
+    
     local outerBase = getPlateColor(outer)
     local normalInnerPosition = UDim2.fromScale(0.04, 0.08)
     local pressedInnerPosition = UDim2.fromScale(0.04, 0.11)
@@ -2383,9 +2784,9 @@ local function makeNativeInput(parent, config)
     return holder, box
 end
 
-----------------------------------------------------------------
--- Item card overlays
-----------------------------------------------------------------
+
+
+
 
 local function getOrCreateOverlay(card)
     local existing = card:FindFirstChild("DQInventoryQOL")
@@ -2521,7 +2922,7 @@ local function updateOverlay(card, info)
     local showBadges = not Persistent.Settings.HideBadges
 
     if status then
-        status.Visible = showBadges
+        status.Visible = showBadges and not Persistent.Settings.HideStatusBadge
         if info.IsJunk then
             status.Text = info.RollGrade
                 and ("JUNK • " .. info.RollGrade)
@@ -2533,6 +2934,9 @@ local function updateOverlay(card, info)
                 status.Text ..= " • " .. info.RollGrade
             end
             status.TextColor3 = Color3.fromRGB(255, 232, 85)
+        elseif info.IsWishlist then
+            status.Text = "WISH" .. (info.RollGrade and (" • " .. info.RollGrade) or "")
+            status.TextColor3 = Color3.fromRGB(120, 235, 255)
         elseif info.RollGrade then
             status.Text = info.RollGrade
             status.TextColor3 = Color3.fromRGB(255, 232, 85)
@@ -2543,7 +2947,7 @@ local function updateOverlay(card, info)
     end
 
     if newBadge then
-        newBadge.Visible = showBadges
+        newBadge.Visible = showBadges and not Persistent.Settings.HideNewBadge
         newBadge.Text =
             (info.UID and Persistent.NewIDs[info.UID])
             and "NEW"
@@ -2551,7 +2955,7 @@ local function updateOverlay(card, info)
     end
 
     if pct then
-        pct.Visible = showBadges
+        pct.Visible = showBadges and not Persistent.Settings.HideUpgradeBadge
         if info.Field and info.MaxUpgrades > 0 then
             pct.Text = "U" .. formatUpgradeProgress(info.CurrentUpgrade, info.MaxUpgrades, 0)
         else
@@ -2565,14 +2969,14 @@ local function updateOverlay(card, info)
     end
 
     if lock then
-        lock.Visible = showBadges
+        lock.Visible = showBadges and not Persistent.Settings.HideProtectionBadge
         local tags = {}
         if info.UID and Persistent.Locked[info.UID] then
             tags[#tags + 1] = "LOCK"
         end
-        if info.IsLoadoutProtected then
-            tags[#tags + 1] = "SET"
-        end
+        if info.IsLoadoutProtected then tags[#tags + 1] = "SET" end
+        if info.IsWishlist then tags[#tags + 1] = "WISH" end
+        if Persistent.Settings.ProtectSRolls and info.RollGrade == "S" then tags[#tags + 1] = "S" end
         lock.Text = table.concat(tags, " • ")
     end
 
@@ -2606,9 +3010,9 @@ local function refreshAllOverlays()
     end
 end
 
-----------------------------------------------------------------
--- Tooltip QOL
-----------------------------------------------------------------
+
+
+
 
 local function getTooltipMain(gui, itemType)
     local statFrame = gui and gui:FindFirstChild("itemStatFrame")
@@ -2631,15 +3035,15 @@ local function getTooltipMain(gui, itemType)
     return nil
 end
 
--- Keep the native Dungeon Quest tooltip above the inventory card tree.
---
--- With ZIndexBehavior.Sibling, raising only a tooltip child is not enough:
--- itemStatFrame itself must sit above mainBackground, otherwise the entire
--- inventory subtree can render over the tooltip regardless of descendant ZIndex.
--- With ZIndexBehavior.Global, descendants participate globally, so the native
--- tooltip descendants also need to clear our card-overlay range (which tops out
--- in the mid-50s).  We preserve each native object's original relative ZIndex
--- and restore it when this QOL script detaches/stops.
+
+
+
+
+
+
+
+
+
 local TOOLTIP_GLOBAL_BASE_Z = 60
 
 local function rememberNativeTooltipZ(obj)
@@ -2671,8 +3075,8 @@ local function promoteNativeTooltipStack(gui)
     local statSaved = rememberNativeTooltipZ(statFrame)
 
     if behavior == Enum.ZIndexBehavior.Sibling then
-        -- In Sibling mode, the parent's layer controls whether the whole native
-        -- tooltip subtree can appear above the inventory subtree.
+        
+        
         local inventoryRootZ = 0
         if mainBackground and mainBackground:IsA("GuiObject") then
             inventoryRootZ = mainBackground.ZIndex
@@ -2682,8 +3086,8 @@ local function promoteNativeTooltipStack(gui)
             inventoryRootZ + 1
         )
     else
-        -- Global mode compares every GuiObject directly. Raise native tooltip
-        -- objects above card overlays while retaining their native ordering.
+        
+        
         statFrame.ZIndex = TOOLTIP_GLOBAL_BASE_Z
 
         local extraRoot = statFrame:FindFirstChild("DQInventoryExtra")
@@ -2790,30 +3194,32 @@ local function ensureTooltipExtra(gui)
     return extra
 end
 
--- Forward declaration: tooltip/card identity guards can request the
--- batched authoritative refresh that is implemented later in the file.
+
+
 local scheduleInventoryRefresh
 local showDuplicateComparison
 
 local function updateHoveredTooltip()
     local card = Controller.HoveredCard
     local gui = Controller.CurrentGui
+    local info = card and Controller.CardInfo[card] or Controller.HoveredEquippedInfo
 
-    if not card or not card.Parent or not gui or not gui.Parent then
-        if Controller.TooltipExtra then
-            Controller.TooltipExtra.Visible = false
-        end
+    if not gui or not gui.Parent or not info or not info.Item then
+        if Controller.TooltipExtra then Controller.TooltipExtra.Visible = false end
         return
     end
 
-    local info = Controller.CardInfo[card]
-    if not info or not info.Item then
+    if card and not card.Parent then
+        if Controller.TooltipExtra then Controller.TooltipExtra.Visible = false end
         return
     end
 
-    -- Cards can be reused/reordered by Dungeon Quest. Never trust an old
-    -- CardInfo mapping if the live card identity changed underneath it.
-    local liveType, liveNumber = getCardIdentity(card)
+    local liveType, liveNumber
+    if card then
+        liveType, liveNumber = getCardIdentity(card)
+    else
+        liveType, liveNumber = info.ItemType, info.ItemNumber
+    end
 
     if liveType ~= info.ItemType or liveNumber ~= info.ItemNumber then
         if Controller.TooltipExtra then
@@ -2829,8 +3235,8 @@ local function updateHoveredTooltip()
 
     local item = info.Item
 
-    -- The tooltip must be promoted as a whole before its native children are
-    -- edited/shown; otherwise inventory cards can render through it.
+    
+    
     promoteNativeTooltipStack(gui)
 
     local main = getTooltipMain(gui, info.ItemType)
@@ -2843,9 +3249,9 @@ local function updateHoveredTooltip()
         return
     end
 
-    -- The native tooltip's upgrade counter is a useful stale-data checksum.
-    -- If Dungeon Quest says 17992/17992 but our cached record says 0/17992,
-    -- do NOT overwrite the native stats with stale potential numbers.
+    
+    
+    
     local upgradesLabel = main:FindFirstChild("upgrades")
 
     if upgradesLabel and upgradesLabel:IsA("TextLabel") then
@@ -2900,10 +3306,10 @@ local function updateHoveredTooltip()
         return
     end
 
-    -- Anchor the QOL panel to the ACTUAL active tooltip panel, not to
-    -- itemStatFrame. Armor tooltips are taller (1.3x), while weapon/pet
-    -- tooltips use different widths/heights. Matching main.Size keeps the
-    -- addon directly below the tooltip with the exact same width.
+    
+    
+    
+    
     extra.Position = UDim2.new(
         main.Position.X.Scale,
         main.Position.X.Offset,
@@ -2999,7 +3405,14 @@ local function updateHoveredTooltip()
     end
 
     if info.IsJunk then
-        details[#details + 1] = "Smart Junk"
+        details[#details + 1] = "Smart Junk" .. (info.JunkReason and (": " .. info.JunkReason) or "")
+    end
+    if info.IsWishlist then details[#details + 1] = "Wishlist" end
+    if not Persistent.Settings.CompactTooltip and info.RollPercentile then
+        details[#details + 1] = "Roll %ile " .. tostring(info.RollPercentile)
+    end
+    if not Persistent.Settings.CompactTooltip and info.BreakEvenCount and info.BreakEvenCount > 0 then
+        details[#details + 1] = "+" .. formatInt(info.BreakEvenCount) .. " / " .. formatCompact(info.BreakEvenCost or 0) .. "g to beat equipped now"
     end
 
     if info.UID and Persistent.Favorites[info.UID] then
@@ -3010,9 +3423,9 @@ local function updateHoveredTooltip()
         details[#details + 1] = "Locked"
     end
 
-    if info.IsLoadoutProtected then
-        details[#details + 1] = "Loadout"
-    end
+    if info.IsLoadoutProtected then details[#details + 1] = "Loadout" end
+    if info.CustomTag and info.CustomTag ~= "" then details[#details + 1] = "Tag: " .. info.CustomTag end
+    if not Persistent.Settings.CompactTooltip and info.Note and info.Note ~= "" then details[#details + 1] = "Note: " .. info.Note end
 
     if not Persistent.Settings.CompactTooltip
         and info.BudgetUpgradeCount
@@ -3029,14 +3442,86 @@ local function updateHoveredTooltip()
     extra.Visible = true
 end
 
-----------------------------------------------------------------
--- Sell-shop lock protection
-----------------------------------------------------------------
+local function clearEquippedBindings()
+    disconnectAll(Controller.EquippedConnections)
+    for obj in pairs(Controller.EquippedBadgeObjects) do
+        if obj and obj.Parent then
+            pcall(function() obj.Parent:SetAttribute("DQEquippedQOLBound", nil) end)
+            pcall(function() obj:Destroy() end)
+        end
+    end
+    table.clear(Controller.EquippedBadgeObjects)
+    Controller.HoveredEquippedInfo = nil
+end
+
+local function bindEquippedGuiObject(guiObject, info)
+    if not guiObject or not guiObject:IsA("GuiObject") or not info or not info.IsEquipped then return end
+    local existing = guiObject:FindFirstChild("DQEquippedPot")
+    local badge = existing
+    if not badge then
+        badge = Instance.new("TextLabel")
+        badge.Name = "DQEquippedPot"
+        badge.AnchorPoint = Vector2.new(1, 1)
+        badge.Position = UDim2.fromScale(0.98, 0.98)
+        badge.Size = UDim2.new(0.76, 0, 0.22, 0)
+        badge.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+        badge.BackgroundTransparency = 0.12
+        badge.BorderSizePixel = 1
+        badge.BorderColor3 = Color3.fromRGB(8, 8, 8)
+        badge.Font = Enum.Font.GothamBlack
+        badge.TextScaled = true
+        badge.TextColor3 = Color3.fromRGB(245, 245, 245)
+        badge.TextStrokeColor3 = Color3.new(0, 0, 0)
+        badge.TextStrokeTransparency = 0
+        badge.ZIndex = math.max(60, guiObject.ZIndex + 10)
+        badge.Parent = guiObject
+        Controller.EquippedBadgeObjects[badge] = true
+    end
+    badge.Text = "P " .. formatCompact(info.Potential or info.Current or 0)
+    badge.Visible = not Persistent.Settings.HideBadges and not Persistent.Settings.HideUpgradeBadge
+
+    if not guiObject:GetAttribute("DQEquippedQOLBound") then
+        guiObject:SetAttribute("DQEquippedQOLBound", true)
+        addConnection(Controller.EquippedConnections, guiObject.MouseEnter:Connect(function()
+            Controller.HoveredEquippedInfo = info
+            Controller.PinnedUID = Controller.PinnedUID or nil
+            task.defer(updateHoveredTooltip)
+            task.delay(0.05, updateHoveredTooltip)
+        end))
+        addConnection(Controller.EquippedConnections, guiObject.MouseLeave:Connect(function()
+            if Controller.HoveredEquippedInfo == info then Controller.HoveredEquippedInfo = nil end
+            if not Controller.HoveredCard and Controller.TooltipExtra then Controller.TooltipExtra.Visible = false end
+        end))
+    end
+end
+
+local function refreshEquippedUI()
+    local gui = Controller.CurrentGui
+    if not gui or not gui.Parent then return end
+    local main = gui:FindFirstChild("mainBackground")
+    local inner = main and main:FindFirstChild("innerBackground")
+    if not inner then return end
+    local direct = {}
+    for _, obj in ipairs(inner:GetDescendants()) do
+        if obj:IsA("GuiObject") and not (Controller.CurrentScroll and obj:IsDescendantOf(Controller.CurrentScroll)) then
+            local t, n = getCardIdentity(obj)
+            if t and n then
+                local item = lookupItem(t, n)
+                local uid = item and uidForItem(item)
+                local info = uid and Controller.InventoryInfoByUID[uid]
+                if info and info.IsEquipped then
+                    direct[info.UID or tostring(t) .. ":" .. tostring(n)] = true
+                    bindEquippedGuiObject(obj, info)
+                end
+            end
+        end
+    end
+end
 
 local function cleanupSellShop()
     disconnectAll(Controller.SellConnections)
 
-    -- Restore only cards that the QOL lock system itself hid.
+    
     for card in pairs(Controller.SellHiddenByLock) do
         if card and card.Parent then
             pcall(function()
@@ -3078,7 +3563,7 @@ local function applySellCardLock(card)
             card.Visible = false
         end
     elseif Controller.SellHiddenByLock[card] then
-        -- Only restore visibility if our own lock feature hid this card.
+        
         Controller.SellHiddenByLock[card] = nil
         card.Visible = true
     end
@@ -3156,9 +3641,9 @@ local function attachSellShop(gui)
     refreshSellShopLocks()
 end
 
-----------------------------------------------------------------
--- Card binding
-----------------------------------------------------------------
+
+
+
 
 local function clearNewMarker(info)
     if info and info.UID and Persistent.NewIDs[info.UID] then
@@ -3366,9 +3851,9 @@ local function bindAllCards(scroll)
     end
 end
 
-----------------------------------------------------------------
--- Toolbar / class UI
-----------------------------------------------------------------
+
+
+
 
 local function updateClassButtonVisuals()
     local bar = Controller.CurrentClassBar
@@ -3478,8 +3963,25 @@ local function updateToolbarVisuals()
     end
 end
 
+local function applyGridLayoutSettings()
+    local scroll = Controller.CurrentScroll
+    local grid = scroll and scroll:FindFirstChildOfClass("UIGridLayout")
+    if not grid then return end
+    local base = Controller.OriginalGridCellSize or grid.CellSize
+    local factor = math.clamp(tonumber(Persistent.Settings.GridScale) or 100, 70, 140) / 100
+    local columns = math.clamp(math.floor(tonumber(Persistent.Settings.GridColumns) or 0), 0, 12)
+    local xScale = base.X.Scale * factor
+    local xOffset = math.floor(base.X.Offset * factor)
+    if columns > 0 then
+        xScale = math.max(0.02, (1 / columns) - 0.012)
+        xOffset = -4
+    end
+    grid.CellSize = UDim2.new(xScale, xOffset, base.Y.Scale * factor, math.floor(base.Y.Offset * factor))
+end
+
 local function applyAll()
     rebuildMetrics()
+    applyGridLayoutSettings()
     sortCards()
 
     for card in pairs(Controller.CardInfo) do
@@ -3489,6 +3991,7 @@ local function applyAll()
     end
 
     refreshAllOverlays()
+    refreshEquippedUI()
     updateClassButtonVisuals()
     updateToolbarVisuals()
     updateHoveredTooltip()
@@ -3585,10 +4088,10 @@ local function closePopups()
 end
 
 local function makePopupPlate(parent, name, position, size)
-    -- v18.6: popup shells use the same true square geometry as the rest of
-    -- the custom controls.  Using Frames also makes ClipsDescendants match
-    -- the visible popup rectangle exactly (the old rounded image had a
-    -- stylized/slanted opaque area that made content look like it overflowed).
+    
+    
+    
+    
     local popup = Instance.new("Frame")
     popup.Name = name
     popup.Position = position
@@ -3992,9 +4495,9 @@ local function makeToolbar(rightSide)
 end
 
 
-----------------------------------------------------------------
--- Best-gear actions
-----------------------------------------------------------------
+
+
+
 
 local reindexCards
 local clearPendingAutoUpgrade
@@ -4079,10 +4582,27 @@ local function selectedBestTargets()
     local targets = {}
     local order = {"weapon", "chest", "helmet"}
 
+    local equippedBySlot = {}
+    for _, candidate in ipairs(Controller.InventoryInfos or {}) do
+        local slot = slotForType(candidate.ItemType)
+        if slot and candidate.IsEquipped then equippedBySlot[slot] = candidate end
+    end
+
     for _, slot in ipairs(order) do
         local info = modeMap[className .. ":" .. slot]
+        local equipped = equippedBySlot[slot]
         if info and info.IsEquipable then
-            targets[#targets + 1] = info
+            local accepted = true
+            if equipped and info ~= equipped and not info.IsEquipped then
+                local candidateScore = mode == "Now" and (info.Current or 0) or mode == "Budget" and (info.BudgetPotential or 0) or (info.Potential or 0)
+                local equippedScore = mode == "Now" and (equipped.Current or 0) or mode == "Budget" and (equipped.BudgetPotential or equipped.Current or 0) or (equipped.Potential or equipped.Current or 0)
+                local gain = candidateScore - equippedScore
+                local pct = gain / math.max(1, math.abs(equippedScore)) * 100
+                if gain < (tonumber(Persistent.Settings.MinImprovementFlat) or 0) then accepted = false end
+                if pct < (tonumber(Persistent.Settings.MinImprovementPct) or 0) then accepted = false end
+                if Persistent.Settings.RequireBetterNow and (info.Current or 0) <= (equipped.Current or 0) then accepted = false end
+            end
+            targets[#targets + 1] = accepted and info or equipped or info
         end
     end
 
@@ -4195,6 +4715,8 @@ local function autoEquipBest()
 
                 if triggerNativeGearClick(info) then
                     equippedCount += 1
+                    if info.UID then Controller.RecentlyEquippedUIDs[info.UID] = os.time() end
+                    Controller.SessionStats.Equipped = (Controller.SessionStats.Equipped or 0) + 1
                 end
 
                 task.wait(0.18)
@@ -4256,7 +4778,7 @@ local function isAuthoritativeSnapshot(snapshot)
     if type(snapshot) ~= "table" then
         return false
     end
-    -- Missing containers must not be mistaken for an empty/sold inventory.
+    
     for _, name in ipairs({"weapons", "chests", "helmets", "abilities"}) do
         if type(snapshot[name]) ~= "table" then
             return false
@@ -4481,7 +5003,7 @@ local function executeUpgradePlan(plan)
                 return
             end
 
-            -- Validate the whole quote before the first request by immutable UID.
+            
             for _, entry in ipairs(plan.Entries) do
                 local item, number = snapshotItemByUID(snapshot, entry.ItemType, entry.UID)
                 local current, maximum = upgradeBounds(item)
@@ -4537,7 +5059,7 @@ local function executeUpgradePlan(plan)
                     break
                 end
 
-                -- Exact counted request. Stop never interrupts a request already sent.
+                
                 upgradeRemote:FireServer(
                     entry.ItemType,
                     number,
@@ -4555,6 +5077,9 @@ local function executeUpgradePlan(plan)
                 actualPurchased += purchased
                 if purchased > 0 then
                     changedPieces += 1
+                    if entry.UID then Controller.RecentlyUpgradedUIDs[entry.UID] = os.time() end
+                    Controller.SessionStats.Upgrades = (Controller.SessionStats.Upgrades or 0) + purchased
+                    Controller.SessionStats.UpgradeGold = (Controller.SessionStats.UpgradeGold or 0) + math.max(0, (beforeGold or 0) - (afterGold or beforeGold))
                 end
 
                 detailLines[#detailLines + 1] =
@@ -4596,7 +5121,7 @@ local function executeUpgradePlan(plan)
         if not ok then
             stopReason =
                 "An error stopped the action; check the native inventory before trying again."
-            warn("[DQ Inventory QOL v18.6] upgrade stopped:", err)
+            warn("[DQ Inventory QOL v19.1] upgrade stopped:", err)
         end
 
         if actualPurchased > 0
@@ -4787,6 +5312,11 @@ local function requestAutoUpgradeBest()
             .. ", gold left " .. formatInt(remainingGold)
     end
 
+    local spendPct = gold > 0 and (plan.EstimatedSpend / gold * 100) or 0
+    local warnPct = tonumber(Persistent.Settings.HighSpendPct) or 0
+    if warnPct > 0 and spendPct >= warnPct then
+        bodyLines[#bodyLines + 1] = "WARNING: this plan spends " .. string.format("%.1f%%", spendPct) .. " of current gold."
+    end
     bodyLines[#bodyLines + 1] = ""
     bodyLines[#bodyLines + 1] =
         "Total: " .. formatInt(plan.PlannedUpgrades)
@@ -4828,9 +5358,9 @@ local function buildJunkSellPlan()
     local seenUIDs = {}
     local maxAutoSellValue = nonNegativeInteger(Persistent.Settings.AutoSellMaxValue)
 
-    -- v18: enumerate the authoritative inventory model, not only visible cards.
-    -- This makes equipped/non-card copies participate in duplicate ranking while
-    -- still remaining protected from sale.
+    
+    
+    
     for _, info in ipairs(Controller.InventoryInfos or {}) do
         local supported = SELL_SUPPORTED_TYPES[info.ItemType] == true
         local protected =
@@ -4978,8 +5508,8 @@ local function executeSellJunk(plan)
                     .. (#sentEntries == 1 and "" or "s")
                 )
 
-                -- Once this request is sent, Stop cannot undo it. We wait for its
-                -- confirmation, then honor Stop before sending another request.
+                
+                
                 sellRemote:FireServer(payload)
 
                 local confirmed, complete = waitForSaleOutcome(sentEntries, 6)
@@ -4992,6 +5522,9 @@ local function executeSellJunk(plan)
                         removedThisPass += 1
                         estimatedValue += entry.SellValue
                         Persistent.NewIDs[entry.UID] = nil
+                        Controller.RecentlySoldUIDs[entry.UID] = os.time()
+                        Controller.SessionStats.Sold = (Controller.SessionStats.Sold or 0) + 1
+                        Controller.SessionStats.SellGold = (Controller.SessionStats.SellGold or 0) + nonNegativeInteger(entry.SellValue)
                         removedUIDs[#removedUIDs + 1] = entry.UID
                     end
                 end
@@ -5011,7 +5544,7 @@ local function executeSellJunk(plan)
 
         if not ok then
             stopReason = "An error stopped selling; unconfirmed removals were not counted or retried."
-            warn("[DQ Inventory QOL v18.6] sell stopped:", err)
+            warn("[DQ Inventory QOL v19.1] sell stopped:", err)
         end
 
         local stopped = Controller.ActionCancelRequested
@@ -5065,8 +5598,8 @@ local function requestAutoSellJunk()
     synchronizeActionCards(snapshot)
     local plan = buildJunkSellPlan()
 
-    -- Subsequent duplicate layers may include only inventory present at
-    -- confirmation. New drops received during the action are never added.
+    
+    
     plan.AllowedUIDs = {}
     iterateInventoryRecords(function(_, _, item)
         local uid = uidForItem(item)
@@ -5085,13 +5618,22 @@ local function requestAutoSellJunk()
     end
 
     local maxValue = nonNegativeInteger(Persistent.Settings.AutoSellMaxValue)
+    local highValueThreshold = nonNegativeInteger(Persistent.Settings.HighValueWarning)
+    local highValueCount = 0
+    if highValueThreshold > 0 then
+        for _, entry in ipairs(plan.Entries or {}) do
+            if nonNegativeInteger(entry.SellValue) >= highValueThreshold then highValueCount += 1 end
+        end
+    end
     local body =
-        "Sell duplicate junk until only the best eligible copy of each item remains?\n"
+        "Sell duplicate junk until only the best eligible copies remain?\n"
         .. tostring(plan.Count)
         .. " item" .. (plan.Count == 1 and "" or "s")
         .. " are marked in the first pass; estimated value "
         .. formatInt(plan.TotalValue) .. ".\n"
-        .. "Equipped, favorited, locked, and saved-loadout items are protected.\n"
+        .. "Keep policy: top " .. tostring(math.max(1, nonNegativeInteger(Persistent.Settings.KeepCopies, 1))) .. " copies plus protected items.\n"
+        .. "Equipped, favorites, locks, loadouts, wishlist, S-roll and Legendary+ protection rules are respected.\n"
+        .. (highValueCount > 0 and ("WARNING: " .. tostring(highValueCount) .. " marked item(s) meet the high-value warning threshold.\n") or "")
         .. (maxValue > 0
             and ("Auto-sell value ceiling: " .. formatInt(maxValue) .. ". Items above it are skipped.\n")
             or "Auto-sell value ceiling: OFF.\n")
@@ -5191,9 +5733,9 @@ local function buildConfirmPopup(rightSide)
 end
 
 
-----------------------------------------------------------------
--- v18 loadouts / settings / duplicate comparison / More panel
-----------------------------------------------------------------
+
+
+
 
 local function sortedLoadoutNames()
     local names = {}
@@ -5440,11 +5982,11 @@ local function requestApplyLoadout(name)
     )
 end
 
-local EXPORT_FILE = "DQ_Inventory_QOL_v18_export.json"
+local EXPORT_FILE = "DQ_Inventory_QOL_v19_export.json"
 
 local function buildExportPayload()
     return {
-        Version = 18,
+        Version = 19,
         Settings = Persistent.Settings,
         UIState = {
             ClassFilter = Controller.ClassFilter or "",
@@ -5455,6 +5997,13 @@ local function buildExportPayload()
         Favorites = Persistent.Favorites,
         Locked = Persistent.Locked,
         Loadouts = Persistent.Loadouts,
+        Wishlist = Persistent.Wishlist,
+        KeepRules = Persistent.KeepRules,
+        ItemNotes = Persistent.ItemNotes,
+        ItemTags = Persistent.ItemTags,
+        SavedSearches = Persistent.SavedSearches,
+        SettingsProfiles = Persistent.SettingsProfiles,
+        ClassProfiles = Persistent.ClassProfiles,
     }
 end
 
@@ -5488,26 +6037,9 @@ local function exportSettings()
     end
 end
 
-local IMPORTABLE_SETTINGS = {
-    SortMode = true,
-    HideCommon = true,
-    HideAbilities = true,
-    OnlyUpgradable = true,
-    OnlyEquipable = true,
-    GroupDupes = true,
-    HideJunk = true,
-    MinLevel = true,
-    GoldReserve = true,
-    SpendCap = true,
-    TargetUpgradePct = true,
-    UpgradeWeapon = true,
-    UpgradeChest = true,
-    UpgradeHelmet = true,
-    AutoSellMaxValue = true,
-    HideBadges = true,
-    CompactTooltip = true,
-    TooltipTextSize = true,
-}
+local IMPORTABLE_SETTINGS = {}
+for key in pairs(Persistent.Settings) do IMPORTABLE_SETTINGS[key] = true end
+
 
 local function readImportText()
     if type(getclipboard) == "function" then
@@ -5547,6 +6079,13 @@ local function requestImportSettings()
     local favorites = type(data.Favorites) == "table" and data.Favorites or {}
     local locked = type(data.Locked) == "table" and data.Locked or {}
     local loadouts = type(data.Loadouts) == "table" and data.Loadouts or {}
+    local wishlist = type(data.Wishlist) == "table" and data.Wishlist or {}
+    local keepRules = type(data.KeepRules) == "table" and data.KeepRules or {}
+    local itemNotes = type(data.ItemNotes) == "table" and data.ItemNotes or {}
+    local itemTags = type(data.ItemTags) == "table" and data.ItemTags or {}
+    local savedSearches = type(data.SavedSearches) == "table" and data.SavedSearches or {}
+    local settingsProfiles = type(data.SettingsProfiles) == "table" and data.SettingsProfiles or {}
+    local classProfiles = type(data.ClassProfiles) == "table" and data.ClassProfiles or {}
 
     local settingCount, favoriteCount, lockedCount, loadoutCount = 0, 0, 0, 0
     for key in pairs(settings) do
@@ -5562,7 +6101,7 @@ local function requestImportSettings()
         .. tostring(favoriteCount) .. " favorites • "
         .. tostring(lockedCount) .. " locks • "
         .. tostring(loadoutCount) .. " loadouts\n"
-        .. "Current data is replaced only after confirmation."
+        .. "Mode: " .. tostring(Persistent.Settings.ImportMode or "Replace") .. ". A preview is shown before applying."
 
     showConfirmation("IMPORT SETTINGS", preview, function()
         for key, value in pairs(settings) do
@@ -5571,9 +6110,23 @@ local function requestImportSettings()
             end
         end
 
-        Persistent.Favorites = favorites
-        Persistent.Locked = locked
-        Persistent.Loadouts = loadouts
+        local mergeMode = Persistent.Settings.ImportMode == "Merge"
+        local function mergeInto(target, incoming)
+            if not mergeMode then return incoming end
+            target = type(target) == "table" and target or {}
+            for key, value in pairs(incoming) do target[key] = value end
+            return target
+        end
+        Persistent.Favorites = mergeInto(Persistent.Favorites, favorites)
+        Persistent.Locked = mergeInto(Persistent.Locked, locked)
+        Persistent.Loadouts = mergeInto(Persistent.Loadouts, loadouts)
+        Persistent.Wishlist = mergeInto(Persistent.Wishlist, wishlist)
+        Persistent.KeepRules = mergeInto(Persistent.KeepRules, keepRules)
+        Persistent.ItemNotes = mergeInto(Persistent.ItemNotes, itemNotes)
+        Persistent.ItemTags = mergeInto(Persistent.ItemTags, itemTags)
+        Persistent.SavedSearches = mergeInto(Persistent.SavedSearches, savedSearches)
+        Persistent.SettingsProfiles = mergeInto(Persistent.SettingsProfiles, settingsProfiles)
+        Persistent.ClassProfiles = mergeInto(Persistent.ClassProfiles, classProfiles)
 
         if type(data.UIState) == "table" then
             local mode = tostring(data.UIState.BestMode or "Off")
@@ -5583,7 +6136,7 @@ local function requestImportSettings()
             end
         end
 
-        -- Normalize numeric controls after importing untrusted JSON values.
+        
         Persistent.Settings.MinLevel = nonNegativeInteger(Persistent.Settings.MinLevel)
         Persistent.Settings.GoldReserve = nonNegativeInteger(Persistent.Settings.GoldReserve)
         Persistent.Settings.SpendCap = nonNegativeInteger(Persistent.Settings.SpendCap)
@@ -5647,7 +6200,9 @@ local function actionLogText()
     return table.concat(lines, "\n")
 end
 
-local function makePanelLabel(parent, name, textValue, height, layoutOrder)
+local QOL = {}
+
+function QOL.makePanelLabel(parent, name, textValue, height, layoutOrder)
     local label = Instance.new("TextLabel")
     label.Name = name
     label.LayoutOrder = layoutOrder or 1
@@ -5673,7 +6228,7 @@ local function makePanelLabel(parent, name, textValue, height, layoutOrder)
     return label
 end
 
-local function makePanelButton(parent, name, textValue, order, callback)
+function QOL.makePanelButton(parent, name, textValue, order, callback)
     local button = makeNativeButton(parent, {
         Name = name,
         LayoutOrder = order,
@@ -5688,7 +6243,7 @@ local function makePanelButton(parent, name, textValue, order, callback)
     return button
 end
 
-local function bindNumericSetting(box, key, lo, hi, suffix)
+function QOL.bindNumericSetting(box, key, lo, hi, suffix)
     addConnection(Controller.AttachConnections, box.FocusLost:Connect(function()
         local value = nonNegativeInteger(box.Text, Persistent.Settings[key])
         value = math.clamp(value, lo or 0, hi or math.huge)
@@ -5706,148 +6261,605 @@ local function bindNumericSetting(box, key, lo, hi, suffix)
     end))
 end
 
-local function buildMorePopup(rightSide)
-    local popup, inner = makePopupPlate(
-        rightSide,
-        "DQMorePopup",
-        UDim2.fromScale(0.5, 0.57),
-        UDim2.new(0.84, 0, 0.68, 0)
-    )
+function QOL.deepCopyTable(value)
+    if type(value) ~= "table" then return value end
+    local okEncode, raw = pcall(HttpService.JSONEncode, HttpService, value)
+    if not okEncode then return {} end
+    local okDecode, copy = pcall(HttpService.JSONDecode, HttpService, raw)
+    return okDecode and copy or {}
+end
+
+function QOL.selectedMetaInfo()
+    if Controller.PinnedUID and Controller.InventoryInfoByUID[Controller.PinnedUID] then
+        return Controller.InventoryInfoByUID[Controller.PinnedUID]
+    end
+    if Controller.HoveredCard and Controller.CardInfo[Controller.HoveredCard] then
+        return Controller.CardInfo[Controller.HoveredCard]
+    end
+    if Controller.HoveredEquippedInfo then return Controller.HoveredEquippedInfo end
+    return nil
+end
+
+function QOL.pushCompareUID(uid)
+    if not uid then return end
+    uid = tostring(uid)
+    for i = #Controller.CompareSelection, 1, -1 do
+        if Controller.CompareSelection[i] == uid then table.remove(Controller.CompareSelection, i) end
+    end
+    Controller.CompareSelection[#Controller.CompareSelection + 1] = uid
+    while #Controller.CompareSelection > 2 do table.remove(Controller.CompareSelection, 1) end
+end
+
+function QOL.compareSelectionText()
+    local list = {}
+    for _, uid in ipairs(Controller.CompareSelection) do
+        local info = Controller.InventoryInfoByUID[uid]
+        if info then list[#list + 1] = info end
+    end
+    if #list < 2 then return "COMPARE • right-click a duplicate badge or pin/hover two items to compare." end
+    local a, b = list[1], list[2]
+    local currentDelta = (b.Current or 0) - (a.Current or 0)
+    local potDelta = (b.Potential or 0) - (a.Potential or 0)
+    return "COMPARE\nA: " .. tostring(a.Name) .. " • " .. formatCompact(a.Current) .. " → " .. formatCompact(a.Potential)
+        .. "\nB: " .. tostring(b.Name) .. " • " .. formatCompact(b.Current) .. " → " .. formatCompact(b.Potential)
+        .. "\nB − A: " .. (currentDelta >= 0 and "+" or "") .. formatCompact(currentDelta)
+        .. " now • " .. (potDelta >= 0 and "+" or "") .. formatCompact(potDelta) .. " potential"
+end
+
+function QOL.inventoryOverviewText()
+    rebuildMetrics()
+    local count, capacity, pct = inventoryCapacityText()
+    local protected, junk, wish, sroll, improvement, equipable = 0, 0, 0, 0, 0, 0
+    for _, info in ipairs(Controller.InventoryInfos or {}) do
+        if info.IsProtected then protected += 1 end
+        if info.IsJunk then junk += 1 end
+        if info.IsWishlist then wish += 1 end
+        if info.RollGrade == "S" then sroll += 1 end
+        if info.BetterThanEquipped then improvement += 1 end
+        if info.IsEquipable then equipable += 1 end
+    end
+    return "INVENTORY • " .. tostring(count) .. "/" .. tostring(capacity) .. " (" .. string.format("%.0f%%", pct) .. ")"
+        .. " • equipable " .. tostring(equipable)
+        .. "\nProtected " .. tostring(protected) .. " • Junk " .. tostring(junk)
+        .. " • Wishlist " .. tostring(wish) .. " • S-roll " .. tostring(sroll)
+        .. " • Potential improvements " .. tostring(improvement)
+end
+
+function QOL.cleanupPreviewText()
+    local plan = buildJunkSellPlan()
+    local protected = 0
+    for _, info in ipairs(Controller.InventoryInfos or {}) do if info.IsProtected then protected += 1 end end
+    return "CLEANUP PREVIEW • " .. tostring(plan.Count or 0) .. " removable"
+        .. " • est. " .. formatCompact(plan.TotalValue or 0) .. " gold"
+        .. " • default keep " .. tostring(math.max(1, nonNegativeInteger(Persistent.Settings.KeepCopies, 1)))
+        .. " • protected " .. tostring(protected)
+end
+
+function QOL.fullLoadoutComparisonText()
+    local className = Controller.ClassFilter
+    if className ~= "Mage" and className ~= "Warrior" and className ~= "Tank" then
+        return "LOADOUT COMPARISON • select Mage, Warrior, or Tank."
+    end
+    rebuildMetrics()
+    local mode = Controller.BestMode ~= "Off" and Controller.BestMode or "Potential"
+    local map = Controller.BestByMode[mode] or {}
+    local lines = {"LOADOUT • " .. className .. " • " .. mode}
+    for _, slot in ipairs({"weapon", "chest", "helmet"}) do
+        local eq, best
+        for _, info in ipairs(Controller.InventoryInfos or {}) do
+            if slotForType(info.ItemType) == slot and info.IsEquipped then eq = info end
+        end
+        best = map[className .. ":" .. slot]
+        if eq or best then
+            local eqValue = eq and (mode == "Now" and eq.Current or mode == "Budget" and eq.BudgetPotential or eq.Potential) or 0
+            local bestValue = best and (mode == "Now" and best.Current or mode == "Budget" and best.BudgetPotential or best.Potential) or 0
+            local delta = bestValue - eqValue
+            lines[#lines + 1] = string.upper(slot) .. " • " .. tostring(eq and eq.Name or "none") .. " → " .. tostring(best and best.Name or "none")
+                .. " • " .. (delta >= 0 and "+" or "") .. formatCompact(delta)
+        end
+    end
+    return table.concat(lines, "\n")
+end
+
+function QOL.topUpgradeTargetsText()
+    rebuildMetrics()
+    local list = {}
+    for _, info in ipairs(Controller.InventoryInfos or {}) do
+        local slot = slotForType(info.ItemType)
+        if (slot == "weapon" or slot == "chest" or slot == "helmet") and info.RemainingUpgrades > 0 and info.IsEquipable then
+            list[#list + 1] = info
+        end
+    end
+    table.sort(list, function(a, b)
+        if (a.GainPerGold or 0) ~= (b.GainPerGold or 0) then return (a.GainPerGold or 0) > (b.GainPerGold or 0) end
+        return (a.NextUpgradeGain or 0) > (b.NextUpgradeGain or 0)
+    end)
+    local lines = {"BEST GOLD INVESTMENT"}
+    for i = 1, math.min(3, #list) do
+        local info = list[i]
+        lines[#lines + 1] = tostring(i) .. ". " .. tostring(info.Name)
+            .. " • +" .. formatCompact(info.NextUpgradeGain or 0)
+            .. " / " .. formatCompact(info.NextUpgradeCost or 0) .. "g"
+            .. (info.BreakEvenCount and (" • beat eq: +" .. formatInt(info.BreakEvenCount) .. " / " .. formatCompact(info.BreakEvenCost or 0) .. "g") or "")
+    end
+    if #list == 0 then lines[#lines + 1] = "No eligible upgrades." end
+    return table.concat(lines, "\n")
+end
+
+function QOL.lootHistoryText()
+    local lines = {"RECENT LOOT"}
+    for i = 1, math.min(10, #(Persistent.LootHistory or {})) do
+        local drop = Persistent.LootHistory[i]
+        lines[#lines + 1] = os.date("%H:%M", tonumber(drop.AcquiredAt) or os.time()) .. " • " .. tostring(drop.Name)
+            .. (drop.RollGrade and (" • " .. tostring(drop.RollGrade)) or "")
+            .. (drop.IsWishlist and " • WISH" or "")
+            .. (drop.IsImprovement and " • ▲" or "")
+    end
+    if #lines == 1 then lines[#lines + 1] = "No tracked drops yet." end
+    return table.concat(lines, "\n")
+end
+
+function QOL.captureInventorySnapshot()
+    rebuildMetrics()
+    local snapshot = {}
+    for _, info in ipairs(Controller.InventoryInfos or {}) do
+        if info.UID then
+            snapshot[info.UID] = {
+                Name = info.Name,
+                Current = info.Current,
+                Potential = info.Potential,
+                Upgrades = info.CurrentUpgrade,
+                Equipped = info.IsEquipped,
+            }
+        end
+    end
+    Controller.SessionSnapshot = snapshot
+    Controller.SessionSnapshotTime = os.time()
+    nativeAlert("Inventory snapshot captured.")
+end
+
+function QOL.snapshotDiffText()
+    if not Controller.SessionSnapshot then return "SNAPSHOT DIFF • no snapshot captured." end
+    rebuildMetrics()
+    local current = {}
+    for _, info in ipairs(Controller.InventoryInfos or {}) do if info.UID then current[info.UID] = info end end
+    local added, removed, changed = {}, {}, {}
+    for uid, info in pairs(current) do
+        local old = Controller.SessionSnapshot[uid]
+        if not old then
+            added[#added + 1] = info.Name
+        elseif old.Current ~= info.Current or old.Upgrades ~= info.CurrentUpgrade or old.Equipped ~= info.IsEquipped then
+            changed[#changed + 1] = info.Name
+        end
+    end
+    for uid, old in pairs(Controller.SessionSnapshot) do if not current[uid] then removed[#removed + 1] = old.Name end end
+    return "SNAPSHOT DIFF • +" .. tostring(#added) .. " added • -" .. tostring(#removed) .. " removed • " .. tostring(#changed) .. " changed"
+        .. (#added > 0 and ("\nAdded: " .. table.concat(added, ", ", 1, math.min(6, #added))) or "")
+        .. (#removed > 0 and ("\nRemoved: " .. table.concat(removed, ", ", 1, math.min(6, #removed))) or "")
+        .. (#changed > 0 and ("\nChanged: " .. table.concat(changed, ", ", 1, math.min(6, #changed))) or "")
+end
+
+function QOL.setKeepRule(name, count)
+    local key = wishlistKey(name)
+    if key == "" then nativeAlert("Enter an item name first.") return end
+    count = math.clamp(nonNegativeInteger(count, 1), 1, 20)
+    Persistent.KeepRules[key] = count
+    saveDiskState()
+    rebuildMetrics()
+    nativeAlert("Keep rule: " .. tostring(name) .. " → " .. tostring(count))
+end
+
+function QOL.clearKeepRule(name)
+    local key = wishlistKey(name)
+    if Persistent.KeepRules[key] then
+        Persistent.KeepRules[key] = nil
+        saveDiskState()
+        rebuildMetrics()
+        nativeAlert("Cleared keep rule: " .. tostring(name))
+    end
+end
+
+function QOL.toggleWishlistByName(name)
+    local key = wishlistKey(name)
+    if key == "" then nativeAlert("Enter an item name first.") return end
+    if Persistent.Wishlist[key] then
+        Persistent.Wishlist[key] = nil
+        nativeAlert("Removed from wishlist: " .. tostring(name))
+    else
+        Persistent.Wishlist[key] = tostring(name)
+        nativeAlert("Added to wishlist: " .. tostring(name))
+    end
+    saveDiskState()
+    rebuildMetrics()
+    refreshAllOverlays()
+end
+
+function QOL.saveCurrentSearch(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" or Controller.SearchText == "" then nativeAlert("Enter a saved-search name and a search query first.") return end
+    Persistent.SavedSearches[name] = Controller.SearchText
+    saveDiskState()
+    nativeAlert("Saved search: " .. name)
+end
+
+QOL.PROFILE_SETTING_KEYS = {
+    "SortMode", "HideCommon", "HideAbilities", "OnlyUpgradable", "OnlyEquipable", "GroupDupes", "HideJunk", "MinLevel",
+    "GoldReserve", "SpendCap", "TargetUpgradePct", "UpgradeWeapon", "UpgradeChest", "UpgradeHelmet", "AutoSellMaxValue",
+    "KeepCopies", "ProtectSRolls", "ProtectLegendary", "WishlistAutoLock", "InventoryWarningPct", "MinImprovementPct",
+    "MinImprovementFlat", "RequireBetterNow", "HighValueWarning", "HighSpendPct", "AdvancedSearch", "HideBadges",
+    "CompactTooltip", "TooltipTextSize", "GridScale", "GridColumns"
+}
+
+function QOL.captureProfileSettings()
+    local out = {}
+    for _, key in ipairs(QOL.PROFILE_SETTING_KEYS) do out[key] = QOL.deepCopyTable(Persistent.Settings[key]) end
+    out.BestMode = Controller.BestMode
+    out.SearchText = Controller.SearchText
+    return out
+end
+
+function QOL.applyProfileSettings(profile)
+    if type(profile) ~= "table" then return end
+    for _, key in ipairs(QOL.PROFILE_SETTING_KEYS) do if profile[key] ~= nil then Persistent.Settings[key] = profile[key] end end
+    if profile.BestMode == "Off" or profile.BestMode == "Now" or profile.BestMode == "Potential" or profile.BestMode == "Budget" then
+        Controller.BestMode = profile.BestMode
+        Controller.BestLoadout = profile.BestMode ~= "Off"
+    end
+    if profile.SearchText ~= nil then Controller.SearchText = lower(profile.SearchText) end
+    saveDiskState()
+    applyAll()
+end
+
+function QOL.saveSettingsProfile(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then nativeAlert("Enter a settings-profile name.") return end
+    Persistent.SettingsProfiles[name] = QOL.captureProfileSettings()
+    saveDiskState()
+    nativeAlert("Saved settings profile: " .. name)
+end
+
+function QOL.saveClassProfile()
+    local className = Controller.ClassFilter
+    if className ~= "Mage" and className ~= "Warrior" and className ~= "Tank" then nativeAlert("Select Mage, Warrior, or Tank first.") return end
+    Persistent.ClassProfiles[className] = QOL.captureProfileSettings()
+    saveDiskState()
+    nativeAlert("Saved " .. className .. " profile.")
+end
+
+function QOL.loadClassProfile()
+    local className = Controller.ClassFilter
+    if className ~= "Mage" and className ~= "Warrior" and className ~= "Tank" then nativeAlert("Select Mage, Warrior, or Tank first.") return end
+    local profile = Persistent.ClassProfiles[className]
+    if not profile then nativeAlert("No saved " .. className .. " profile.") return end
+    QOL.applyProfileSettings(profile)
+    nativeAlert("Loaded " .. className .. " profile.")
+end
+
+function QOL.bulkVisible(kind, value)
+    local changed = 0
+    for card, info in pairs(Controller.CardInfo) do
+        if card and card.Parent and card.Visible and info.UID then
+            if kind == "favorite" then
+                Persistent.Favorites[info.UID] = value and true or nil
+                changed += 1
+            elseif kind == "lock" then
+                Persistent.Locked[info.UID] = value and true or nil
+                changed += 1
+            end
+        end
+    end
+    saveDiskState()
+    rebuildMetrics()
+    refreshAllOverlays()
+    refreshSellShopLocks()
+    nativeAlert((value and "Applied " or "Cleared ") .. tostring(kind) .. " on " .. tostring(changed) .. " visible items.")
+end
+
+function QOL.protectionSummaryText()
+    rebuildMetrics()
+    local counts = {}
+    for _, info in ipairs(Controller.InventoryInfos or {}) do
+        for _, reason in ipairs(info.ProtectionReasons or {}) do counts[reason] = (counts[reason] or 0) + 1 end
+    end
+    local parts = {}
+    for _, reason in ipairs({"Equipped", "Favorite", "Locked", "Loadout", "Wishlist", "S Roll", "Legendary+"}) do
+        if counts[reason] then parts[#parts + 1] = reason .. " " .. tostring(counts[reason]) end
+    end
+    return "PROTECTION • " .. (#parts > 0 and table.concat(parts, " • ") or "none")
+end
+
+function QOL.pinHoveredItem()
+    local info = QOL.selectedMetaInfo()
+    if not info or not info.UID then nativeAlert("Hover an item first.") return end
+    Controller.PinnedUID = info.UID
+    QOL.pushCompareUID(info.UID)
+    nativeAlert("Pinned: " .. tostring(info.Name))
+end
+
+function QOL.setPinnedMetadata(noteText, tagText)
+    local info = QOL.selectedMetaInfo()
+    if not info or not info.UID then nativeAlert("Pin or hover an item first.") return end
+    if noteText ~= nil then Persistent.ItemNotes[info.UID] = tostring(noteText) ~= "" and tostring(noteText) or nil end
+    if tagText ~= nil then Persistent.ItemTags[info.UID] = tostring(tagText) ~= "" and tostring(tagText) or nil end
+    saveDiskState()
+    rebuildMetrics()
+    nativeAlert("Updated metadata for " .. tostring(info.Name) .. ".")
+end
+
+function QOL.requestUpgradeUntilBetter()
+    if Controller.ActionBusy then return end
+    local className = Controller.ClassFilter
+    if className ~= "Mage" and className ~= "Warrior" and className ~= "Tank" then nativeAlert("Select Mage, Warrior, or Tank first.") return end
+    if getDQPlaceName() == "Level" then nativeAlert("Upgrade-until-better requires the Lobby.") return end
+    if reindexCards then pcall(reindexCards) end
+    local snapshot = refreshActionInventory()
+    if not snapshot then nativeAlert("Cannot verify a fresh inventory.") return end
+    synchronizeActionCards(snapshot)
+    rebuildMetrics()
+    local gold = currentGold()
+    if not gold then nativeAlert("Gold could not be verified.") return end
+    local budget = configuredSpendBudget(gold)
+    local modeMap = Controller.BestByMode.Potential or {}
+    local entries, spend, totalUpgrades, totalGain = {}, 0, 0, 0
+    for _, slot in ipairs({"weapon", "chest", "helmet"}) do
+        if slotUpgradeEnabled(slot) then
+            local info = modeMap[className .. ":" .. slot]
+            if info and not info.IsEquipped and info.BreakEvenCount and info.BreakEvenCount > 0 then
+                local cost = upgradeCostForCount(info.Item, info.BreakEvenCount)
+                if spend + cost <= budget then
+                    local nextValue = potentialAfterUpgrades(info.Current, info.BreakEvenCount) or info.Current
+                    entries[#entries + 1] = {
+                        UID = info.UID, ItemType = info.ItemType, ItemNumber = info.ItemNumber, Name = info.Name,
+                        Field = info.Field, Stat = statChoiceForClass(className), Slot = slot,
+                        CurrentUpgrade = info.CurrentUpgrade, MaxUpgrades = info.MaxUpgrades, CurrentStat = info.Current,
+                        Amount = info.BreakEvenCount, PlannedCost = cost, PlannedGain = nextValue - info.Current,
+                    }
+                    spend += cost
+                    totalUpgrades += info.BreakEvenCount
+                    totalGain += nextValue - info.Current
+                end
+            end
+        end
+    end
+    if #entries == 0 then nativeAlert("No affordable candidate needs upgrades to become better than equipped now.") return end
+    local plan = {
+        Entries = entries, PlannedUpgrades = totalUpgrades, PlannedGain = totalGain, EstimatedSpend = spend,
+        ClassName = className, ConfirmedGold = gold, ConfiguredBudget = budget, BestMode = "Break-even",
+    }
+    local lines = {"Upgrade candidates only until they become stronger than equipped now?"}
+    for _, entry in ipairs(entries) do lines[#lines + 1] = string.upper(entry.Slot) .. " • " .. entry.Name .. " • +" .. formatInt(entry.Amount) .. " • " .. formatInt(entry.PlannedCost) .. "g" end
+    lines[#lines + 1] = "Total " .. formatInt(totalUpgrades) .. " upgrades • " .. formatInt(spend) .. " gold."
+    showConfirmation("UPGRADE UNTIL BETTER", table.concat(lines, "\n"), function() executeUpgradePlan(plan) end)
+end
+
+function QOL.addQueueAction(kind)
+    Controller.ActionQueue[#Controller.ActionQueue + 1] = kind
+    nativeAlert("Queued: " .. tostring(kind))
+end
+
+function QOL.queueText()
+    if #Controller.ActionQueue == 0 then return "ACTION QUEUE • empty" end
+    return "ACTION QUEUE • " .. table.concat(Controller.ActionQueue, " → ") .. (Controller.QueueRunning and " • RUNNING" or "")
+end
+
+function QOL.runActionQueue()
+    if Controller.QueueRunning or #Controller.ActionQueue == 0 then return end
+    Controller.QueueRunning = true
+    Controller.QueueStopRequested = false
+    task.spawn(function()
+        while #Controller.ActionQueue > 0 and Controller.Alive and not Controller.QueueStopRequested do
+            local kind = table.remove(Controller.ActionQueue, 1)
+            if kind == "Equip" then
+                autoEquipBest()
+            elseif kind == "Upgrade" then
+                requestAutoUpgradeBest()
+            elseif kind == "Upgrade to Better" then
+                QOL.requestUpgradeUntilBetter()
+            elseif kind == "Sell Junk" then
+                requestAutoSellJunk()
+            end
+            task.wait(0.15)
+            while Controller.Alive and Controller.ConfirmAction ~= nil and not Controller.QueueStopRequested do task.wait(0.1) end
+            while Controller.Alive and Controller.ActionBusy and not Controller.QueueStopRequested do task.wait(0.1) end
+            task.wait(0.15)
+        end
+        Controller.QueueRunning = false
+        Controller.QueueStopRequested = false
+        if type(refreshMorePopup) == "function" then pcall(refreshMorePopup) end
+    end)
+end
+
+function QOL.exportSessionSummary()
+    local text = sessionLootSummaryText() .. "\n\n" .. actionLogText() .. "\n\n" .. QOL.lootHistoryText()
+    if canWriteFiles() then
+        local name = "DQ_Inventory_Session_" .. os.date("%Y%m%d_%H%M%S") .. ".txt"
+        local ok = pcall(writefile, name, text)
+        nativeAlert(ok and ("Session summary exported to " .. name) or "Session export failed.")
+    elseif type(setclipboard) == "function" then
+        pcall(setclipboard, text)
+        nativeAlert("Session summary copied to clipboard.")
+    else
+        nativeAlert("No file or clipboard API is available.")
+    end
+end
+
+function QOL.applySavedSearch(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local query = Persistent.SavedSearches[name]
+    if not query then nativeAlert("Saved search not found: " .. name) return end
+    Controller.SearchText = lower(query)
+    saveDiskState()
+    applyAll()
+end
+
+function QOL.deleteSavedSearch(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if Persistent.SavedSearches[name] then
+        Persistent.SavedSearches[name] = nil
+        saveDiskState()
+        nativeAlert("Deleted saved search: " .. name)
+    end
+end
+
+function QOL.applySettingsProfileByName(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local profile = Persistent.SettingsProfiles[name]
+    if not profile then nativeAlert("Settings profile not found: " .. name) return end
+    QOL.applyProfileSettings(profile)
+    nativeAlert("Loaded settings profile: " .. name)
+end
+
+function QOL.deleteSettingsProfileByName(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if Persistent.SettingsProfiles[name] then Persistent.SettingsProfiles[name] = nil saveDiskState() nativeAlert("Deleted settings profile: " .. name) end
+end
+
+function QOL.renameLoadout(oldName, newName, duplicate)
+    oldName = tostring(oldName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    newName = tostring(newName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local preset = Persistent.Loadouts[oldName]
+    if not preset then nativeAlert("Loadout not found: " .. oldName) return end
+    if newName == "" then nativeAlert("Enter a new loadout name.") return end
+    Persistent.Loadouts[newName] = QOL.deepCopyTable(preset)
+    if not duplicate then Persistent.Loadouts[oldName] = nil end
+    saveDiskState()
+    rebuildMetrics()
+    nativeAlert((duplicate and "Duplicated" or "Renamed") .. " loadout: " .. oldName .. " → " .. newName)
+end
+
+function QOL.applyUIMode(mode)
+    if mode == "Minimal" then
+        Persistent.Settings.HideBadges = true
+        Persistent.Settings.CompactTooltip = true
+    elseif mode == "Compact" then
+        Persistent.Settings.HideBadges = false
+        Persistent.Settings.HideStatusBadge = true
+        Persistent.Settings.HideProtectionBadge = true
+        Persistent.Settings.CompactTooltip = true
+    else
+        Persistent.Settings.HideBadges = false
+        Persistent.Settings.HideStatusBadge = false
+        Persistent.Settings.HideProtectionBadge = false
+        Persistent.Settings.CompactTooltip = false
+    end
+    saveDiskState()
+    applyAll()
+end
+
+function QOL.buildMorePopup(rightSide)
+    local popup, inner = makePopupPlate(rightSide, "DQMorePopup", UDim2.fromScale(0.5, 0.56), UDim2.new(0.92, 0, 0.78, 0))
     popup.AnchorPoint = Vector2.new(0.5, 0.5)
     popup.ZIndex = 90
     popup.ClipsDescendants = true
     inner.ZIndex = 91
     inner.ClipsDescendants = true
 
-    -- Keep the scrolling viewport slightly inside the square inner plate.
-    -- Everything below is clipped by this exact rectangle.
-    local content = Instance.new("ScrollingFrame")
-    content.Name = "Content"
-    content.AnchorPoint = Vector2.new(0.5, 0.5)
-    content.Position = UDim2.fromScale(0.5, 0.5)
-    content.Size = UDim2.fromScale(0.94, 0.92)
-    content.BackgroundTransparency = 1
-    content.BorderSizePixel = 0
-    content.ClipsDescendants = true
-    content.Active = true
-    content.ScrollingEnabled = true
-    content.ScrollingDirection = Enum.ScrollingDirection.Y
-    content.ElasticBehavior = Enum.ElasticBehavior.Never
-    content.ScrollBarThickness = 5
-    content.ScrollBarImageColor3 = Color3.fromRGB(138, 138, 138)
-    content.ScrollBarImageTransparency = 0.10
-    content.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
-    content.AutomaticCanvasSize = Enum.AutomaticSize.None
-    content.CanvasSize = UDim2.fromOffset(0, 1)
-    content.ZIndex = 92
-    content.Parent = inner
+    local tabBar = Instance.new("Frame")
+    tabBar.Name = "Tabs"
+    tabBar.Position = UDim2.fromScale(0.02, 0.025)
+    tabBar.Size = UDim2.fromScale(0.96, 0.105)
+    tabBar.BackgroundTransparency = 1
+    tabBar.ZIndex = 94
+    tabBar.Parent = inner
 
-    local contentPadding = Instance.new("UIPadding")
-    contentPadding.PaddingTop = UDim.new(0, 8)
-    contentPadding.PaddingBottom = UDim.new(0, 20)
-    contentPadding.PaddingLeft = UDim.new(0, 4)
-    contentPadding.PaddingRight = UDim.new(0, 12)
-    contentPadding.Parent = content
+    local tabLayout = Instance.new("UIListLayout")
+    tabLayout.FillDirection = Enum.FillDirection.Horizontal
+    tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+    tabLayout.Padding = UDim.new(0.006, 0)
+    tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    tabLayout.Parent = tabBar
 
-    local layout = Instance.new("UIListLayout")
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.VerticalAlignment = Enum.VerticalAlignment.Top
-    layout.Padding = UDim.new(0, 5)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = content
+    local body = Instance.new("Frame")
+    body.Name = "Pages"
+    body.Position = UDim2.fromScale(0.02, 0.145)
+    body.Size = UDim2.fromScale(0.96, 0.825)
+    body.BackgroundTransparency = 1
+    body.ClipsDescendants = true
+    body.ZIndex = 92
+    body.Parent = inner
 
-    local function updateMoreCanvas()
-        if not content.Parent or not layout.Parent then
-            return
+    local pages = {}
+    local function makePage(name)
+        local page = Instance.new("ScrollingFrame")
+        page.Name = name
+        page.Size = UDim2.fromScale(1, 1)
+        page.BackgroundTransparency = 1
+        page.BorderSizePixel = 0
+        page.ClipsDescendants = true
+        page.Active = true
+        page.ScrollingEnabled = true
+        page.ScrollingDirection = Enum.ScrollingDirection.Y
+        page.ElasticBehavior = Enum.ElasticBehavior.Never
+        page.ScrollBarThickness = 5
+        page.ScrollBarImageColor3 = Color3.fromRGB(138, 138, 138)
+        page.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+        page.AutomaticCanvasSize = Enum.AutomaticSize.None
+        page.CanvasSize = UDim2.fromOffset(0, 1)
+        page.Visible = false
+        page.ZIndex = 92
+        page.Parent = body
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 5)
+        pad.PaddingBottom = UDim.new(0, 20)
+        pad.PaddingLeft = UDim.new(0, 4)
+        pad.PaddingRight = UDim.new(0, 12)
+        pad.Parent = page
+        local layout = Instance.new("UIListLayout")
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        layout.VerticalAlignment = Enum.VerticalAlignment.Top
+        layout.Padding = UDim.new(0, 5)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Parent = page
+        local function updateCanvas()
+            page.CanvasSize = UDim2.fromOffset(0, math.max(math.ceil(layout.AbsoluteContentSize.Y + 32), math.ceil(page.AbsoluteWindowSize.Y)))
         end
-
-        -- AbsoluteContentSize already follows AutomaticSize labels/loadout rows.
-        -- Add explicit top/bottom breathing room, and never make the canvas
-        -- shorter than the visible viewport.  This prevents the final row from
-        -- living partially outside the scrollable range.
-        local requiredHeight = math.ceil(layout.AbsoluteContentSize.Y + 36)
-        local visibleHeight = math.ceil(content.AbsoluteWindowSize.Y)
-        content.CanvasSize = UDim2.fromOffset(0, math.max(requiredHeight, visibleHeight))
+        addConnection(Controller.AttachConnections, layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+        addConnection(Controller.AttachConnections, page:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(updateCanvas))
+        task.defer(updateCanvas)
+        pages[name] = page
+        return page
     end
 
-    addConnection(
-        Controller.AttachConnections,
-        layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateMoreCanvas)
-    )
-    addConnection(
-        Controller.AttachConnections,
-        content:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(updateMoreCanvas)
-    )
-    task.defer(updateMoreCanvas)
+    local tabNames = {"Overview", "Loot", "Upgrade", "Loadouts", "Search", "Protect", "History", "UI"}
+    for index, name in ipairs(tabNames) do
+        local button = makeNativeButton(tabBar, {
+            Name = "Tab_" .. name, LayoutOrder = index, Size = UDim2.new(0.116, 0, 0.88, 0), Text = name,
+            InnerColor = Color3.fromRGB(68, 78, 92), ZIndex = 97, MinTextSize = 7, MaxTextSize = 13,
+        })
+        addConnection(Controller.AttachConnections, button.MouseButton1Click:Connect(function()
+            Persistent.Settings.QOLTab = name
+            saveDiskState()
+            for pageName, page in pairs(pages) do page.Visible = pageName == name end
+            refreshMorePopup()
+        end))
+    end
 
-    makePanelLabel(
-        content,
-        "ModeNote",
-        "BEST MODES • Now = current stat • Potential = max stat • Budget = projected stat after affordable upgrades. These are stat comparisons, not guaranteed DPS rankings.",
-        42,
-        1
-    )
+    local function row(parent, name, order)
+        local frame = Instance.new("Frame")
+        frame.Name = name
+        frame.LayoutOrder = order
+        frame.Size = UDim2.new(0.96, 0, 0, 34)
+        frame.BackgroundTransparency = 1
+        frame.ZIndex = 93
+        frame.Parent = parent
+        return frame
+    end
 
-    local loadoutRow = Instance.new("Frame")
-    loadoutRow.Name = "LoadoutRow"
-    loadoutRow.LayoutOrder = 2
-    loadoutRow.Size = UDim2.new(0.94, 0, 0, 34)
-    loadoutRow.BackgroundTransparency = 1
-    loadoutRow.ZIndex = 93
-    loadoutRow.Parent = content
+    local function twoButtons(parent, order, leftName, leftText, leftFn, rightName, rightText, rightFn)
+        local r = row(parent, "Row_" .. leftName .. "_" .. rightName, order)
+        local a = makeNativeButton(r, {Name = leftName, Size = UDim2.new(0.485, 0, 1, 0), Text = leftText, InnerColor = Color3.fromRGB(72, 84, 98), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+        local b = makeNativeButton(r, {Name = rightName, Size = UDim2.new(0.485, 0, 1, 0), Text = rightText, InnerColor = Color3.fromRGB(72, 84, 98), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+        a.Position = UDim2.fromScale(0, 0)
+        b.AnchorPoint = Vector2.new(1, 0)
+        b.Position = UDim2.fromScale(1, 0)
+        addConnection(Controller.AttachConnections, a.MouseButton1Click:Connect(leftFn))
+        addConnection(Controller.AttachConnections, b.MouseButton1Click:Connect(rightFn))
+        return a, b
+    end
 
-    local _, loadoutBox = makeNativeInput(loadoutRow, {
-        Name = "LoadoutName",
-        LayoutOrder = 1,
-        Size = UDim2.new(0.61, 0, 1, 0),
-        Text = "",
-        Placeholder = "Preset name (Mage DPS, Tank, Farming...)",
-        ZIndex = 96,
-    })
-    local holder = loadoutBox.Parent
-    holder.Position = UDim2.fromScale(0, 0)
-
-    local saveButton = makeNativeButton(loadoutRow, {
-        Name = "SaveLoadout",
-        Size = UDim2.new(0.36, 0, 1, 0),
-        Text = "Save Equipped",
-        InnerColor = Color3.fromRGB(72, 118, 83),
-        ZIndex = 96,
-        MinTextSize = 9,
-        MaxTextSize = 15,
-    })
-    saveButton.AnchorPoint = Vector2.new(1, 0)
-    saveButton.Position = UDim2.fromScale(1, 0)
-
-    addConnection(Controller.AttachConnections, saveButton.MouseButton1Click:Connect(function()
-        saveEquippedLoadout(loadoutBox.Text)
-    end))
-
-    makePanelLabel(content, "LoadoutHeader", "SAVED LOADOUTS • left click apply/preview • right click delete", 22, 3)
-
-    local loadoutList = Instance.new("Frame")
-    loadoutList.Name = "LoadoutList"
-    loadoutList.LayoutOrder = 4
-    loadoutList.Size = UDim2.new(0.94, 0, 0, 10)
-    loadoutList.AutomaticSize = Enum.AutomaticSize.Y
-    loadoutList.BackgroundTransparency = 1
-    loadoutList.ZIndex = 93
-    loadoutList.Parent = content
-
-    local loadoutLayout = Instance.new("UIListLayout")
-    loadoutLayout.Padding = UDim.new(0, 4)
-    loadoutLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    loadoutLayout.Parent = loadoutList
-
-    local function numericRow(name, labelText, key, placeholder, order, lo, hi)
-        local row = Instance.new("Frame")
-        row.Name = name
-        row.LayoutOrder = order
-        row.Size = UDim2.new(0.94, 0, 0, 32)
-        row.BackgroundTransparency = 1
-        row.ZIndex = 93
-        row.Parent = content
-
+    local function numeric(parent, order, name, labelText, key, lo, hi)
+        local r = row(parent, "Numeric_" .. name, order)
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(0.57, 0, 1, 0)
         label.BackgroundTransparency = 1
@@ -5859,39 +6871,40 @@ local function buildMorePopup(rightSide)
         label.TextStrokeColor3 = Color3.new(0, 0, 0)
         label.TextStrokeTransparency = 0
         label.ZIndex = 94
-        label.Parent = row
-
-        local _, box = makeNativeInput(row, {
-            Name = name .. "Input",
-            Size = UDim2.new(0.40, 0, 1, 0),
-            Text = tostring(Persistent.Settings[key]),
-            Placeholder = placeholder,
-            ZIndex = 96,
-            TextXAlignment = Enum.TextXAlignment.Center,
-        })
+        label.Parent = r
+        local _, box = makeNativeInput(r, {Name = "SettingInput_" .. key, Size = UDim2.new(0.40, 0, 1, 0), Text = tostring(Persistent.Settings[key]), ZIndex = 96, TextXAlignment = Enum.TextXAlignment.Center})
         box.Parent.AnchorPoint = Vector2.new(1, 0)
         box.Parent.Position = UDim2.fromScale(1, 0)
-        bindNumericSetting(box, key, lo, hi)
+        QOL.bindNumericSetting(box, key, lo, hi)
         return box
     end
 
-    numericRow("GoldReserve", "Keep this much gold", "GoldReserve", "0", 10, 0, 9e15)
-    numericRow("SpendCap", "Spend at most (0 = off)", "SpendCap", "0", 11, 0, 9e15)
-    numericRow("TargetPct", "Target upgrade progress %", "TargetUpgradePct", "100", 12, 0, 100)
-    numericRow("SellMax", "Auto-sell value ceiling (0 = off)", "AutoSellMaxValue", "0", 13, 0, 9e15)
-    numericRow("TooltipSize", "Tooltip text size", "TooltipTextSize", "14", 14, 10, 22)
+    local function textSetting(parent, order, labelText, key)
+        local r = row(parent, "TextSetting_" .. key, order)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.42, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = labelText
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Font = Enum.Font.Highway
+        label.TextSize = 13
+        label.TextColor3 = Color3.fromRGB(240, 240, 240)
+        label.TextStrokeColor3 = Color3.new(0, 0, 0)
+        label.TextStrokeTransparency = 0
+        label.ZIndex = 94
+        label.Parent = r
+        local _, box = makeNativeInput(r, {Name = "SettingInput_" .. key, Size = UDim2.new(0.55, 0, 1, 0), Text = tostring(Persistent.Settings[key] or ""), ZIndex = 96})
+        box.Parent.AnchorPoint = Vector2.new(1, 0)
+        box.Parent.Position = UDim2.fromScale(1, 0)
+        addConnection(Controller.AttachConnections, box.FocusLost:Connect(function()
+            Persistent.Settings[key] = box.Text
+            saveDiskState()
+        end))
+        return box
+    end
 
-    local toggleDefs = {
-        {"UpgradeWeapon", "Upgrade weapon"},
-        {"UpgradeChest", "Upgrade chest"},
-        {"UpgradeHelmet", "Upgrade helmet"},
-        {"HideBadges", "Hide item badges"},
-        {"CompactTooltip", "Compact tooltips"},
-    }
-
-    for index, def in ipairs(toggleDefs) do
-        local key, label = def[1], def[2]
-        makePanelButton(content, "Toggle_" .. key, "", 20 + index, function()
+    local function toggle(parent, order, key, labelText)
+        return QOL.makePanelButton(parent, "Toggle_" .. key, "", order, function()
             Persistent.Settings[key] = not (Persistent.Settings[key] == true)
             saveDiskState()
             rebuildMetrics()
@@ -5900,129 +6913,269 @@ local function buildMorePopup(rightSide)
         end)
     end
 
-    local exportButton = makePanelButton(content, "ExportButton", "Export Settings", 30, exportSettings)
-    local importButton = makePanelButton(content, "ImportButton", "Import Settings (preview)", 31, requestImportSettings)
-    exportButton.Size = UDim2.new(0.47, 0, 0, 32)
-    importButton.Size = UDim2.new(0.47, 0, 0, 32)
+    local overview = makePage("Overview")
+    QOL.makePanelLabel(overview, "OverviewSummary", "", 52, 1)
+    QOL.makePanelLabel(overview, "LoadoutCompare", "", 84, 2)
+    QOL.makePanelLabel(overview, "CleanupPreview", "", 34, 3)
+    twoButtons(overview, 4, "CaptureSnapshot", "Capture Snapshot", QOL.captureInventorySnapshot, "ToggleReview", "Review New Loot", function() Controller.ReviewLootOnly = not Controller.ReviewLootOnly applyAll() refreshMorePopup() end)
+    QOL.makePanelLabel(overview, "QueueSummary", "", 30, 5)
+    twoButtons(overview, 6, "QueueEquip", "+ Equip", function() QOL.addQueueAction("Equip") refreshMorePopup() end, "QueueUpgrade", "+ Upgrade", function() QOL.addQueueAction("Upgrade") refreshMorePopup() end)
+    twoButtons(overview, 7, "QueueBetter", "+ Upgrade→Better", function() QOL.addQueueAction("Upgrade to Better") refreshMorePopup() end, "QueueSell", "+ Sell Junk", function() QOL.addQueueAction("Sell Junk") refreshMorePopup() end)
+    twoButtons(overview, 8, "RunQueue", "Run Queue", QOL.runActionQueue, "ClearQueue", "Clear / Stop Queue", function() Controller.QueueStopRequested = true Controller.ActionQueue = {} refreshMorePopup() end)
+    QOL.makePanelLabel(overview, "CompareSummary", "", 72, 9)
+    twoButtons(overview, 10, "PinHovered", "Pin Hovered Item", function() QOL.pinHoveredItem() refreshMorePopup() end, "PushCompare", "Add Pinned to Compare", function() local info = QOL.selectedMetaInfo() if info then QOL.pushCompareUID(info.UID) end refreshMorePopup() end)
 
-    local transferRow = Instance.new("Frame")
-    transferRow.Name = "TransferRow"
-    transferRow.LayoutOrder = 30
-    transferRow.Size = UDim2.new(0.94, 0, 0, 34)
-    transferRow.BackgroundTransparency = 1
-    transferRow.ZIndex = 93
-    transferRow.Parent = content
-    exportButton.Parent = transferRow
-    importButton.Parent = transferRow
-    exportButton.Position = UDim2.fromScale(0, 0)
-    importButton.AnchorPoint = Vector2.new(1, 0)
-    importButton.Position = UDim2.fromScale(1, 0)
-    exportButton.LayoutOrder = 1
-    importButton.LayoutOrder = 2
+    local loot = makePage("Loot")
+    QOL.makePanelLabel(loot, "LootSummary", "", 42, 1)
+    local wishRow = row(loot, "WishlistRow", 2)
+    local _, wishBox = makeNativeInput(wishRow, {Name = "WishlistInput", Size = UDim2.new(0.67, 0, 1, 0), Text = "", Placeholder = "Exact item name or hover/pin one", ZIndex = 96})
+    local wishButton = makeNativeButton(wishRow, {Name = "WishlistToggle", Size = UDim2.new(0.30, 0, 1, 0), Text = "Add / Remove", InnerColor = Color3.fromRGB(62, 109, 120), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+    wishButton.AnchorPoint = Vector2.new(1, 0) wishButton.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, wishButton.MouseButton1Click:Connect(function() local name = wishBox.Text local info = QOL.selectedMetaInfo() if name == "" and info then name = info.Name end QOL.toggleWishlistByName(name) refreshMorePopup() end))
+    QOL.makePanelLabel(loot, "WishlistList", "", 60, 3)
+    toggle(loot, 4, "DropNotifications", "Drop notifications")
+    toggle(loot, 5, "WishlistNotifications", "Wishlist notifications")
+    toggle(loot, 6, "SRollNotifications", "S-roll notifications")
+    toggle(loot, 7, "LegendaryNotifications", "Legendary+ notifications")
+    textSetting(loot, 8, "Drop sound asset ID", "DropSoundId")
+    numeric(loot, 9, "Capacity", "Inventory capacity fallback", "InventoryCapacity", 1, 2000)
+    numeric(loot, 10, "CapacityWarn", "Capacity warning %", "InventoryWarningPct", 1, 100)
+    numeric(loot, 11, "LootMilestone", "Loot milestone (0 = off)", "LootMilestone", 0, 10000)
+    QOL.makePanelLabel(loot, "LootHistory", "", 150, 12)
 
-    makePanelLabel(content, "SessionSummary", "", 34, 40)
-    makePanelLabel(content, "ActionLog", "", 76, 41)
+    local upgrade = makePage("Upgrade")
+    QOL.makePanelLabel(upgrade, "UpgradeAnalytics", "", 115, 1)
+    numeric(upgrade, 2, "GoldReserve", "Keep this much gold", "GoldReserve", 0, 9e15)
+    numeric(upgrade, 3, "SpendCap", "Spend at most (0 = off)", "SpendCap", 0, 9e15)
+    numeric(upgrade, 4, "TargetPct", "Target upgrade progress %", "TargetUpgradePct", 0, 100)
+    numeric(upgrade, 5, "MinImprovePct", "Minimum equip improvement %", "MinImprovementPct", 0, 100000)
+    numeric(upgrade, 6, "MinImproveFlat", "Minimum equip improvement stat", "MinImprovementFlat", 0, 9e15)
+    numeric(upgrade, 7, "HighSpend", "Large-spend warning %", "HighSpendPct", 0, 100)
+    toggle(upgrade, 8, "RequireBetterNow", "Auto Equip must also be better now")
+    toggle(upgrade, 9, "UpgradeWeapon", "Upgrade weapon")
+    toggle(upgrade, 10, "UpgradeChest", "Upgrade chest")
+    toggle(upgrade, 11, "UpgradeHelmet", "Upgrade helmet")
+    twoButtons(upgrade, 12, "UpgradeUntilBetter", "Upgrade Until Better", QOL.requestUpgradeUntilBetter, "AutoUpgradeCenter", "Auto Upgrade Best", requestAutoUpgradeBest)
 
-    local bottomSpacer = Instance.new("Frame")
-    bottomSpacer.Name = "BottomSpacer"
-    bottomSpacer.LayoutOrder = 99
-    bottomSpacer.Size = UDim2.new(0.94, 0, 0, 12)
-    bottomSpacer.BackgroundTransparency = 1
-    bottomSpacer.BorderSizePixel = 0
-    bottomSpacer.ZIndex = 92
-    bottomSpacer.Parent = content
+    local loadouts = makePage("Loadouts")
+    QOL.makePanelLabel(loadouts, "LoadoutSummary", "", 88, 1)
+    local loadoutRow = row(loadouts, "LoadoutRow", 2)
+    local _, loadoutBox = makeNativeInput(loadoutRow, {Name = "LoadoutName", Size = UDim2.new(0.67, 0, 1, 0), Text = "", Placeholder = "Loadout name", ZIndex = 96})
+    local saveLoadout = makeNativeButton(loadoutRow, {Name = "SaveLoadout", Size = UDim2.new(0.30, 0, 1, 0), Text = "Save Equipped", InnerColor = Color3.fromRGB(72, 118, 83), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+    saveLoadout.AnchorPoint = Vector2.new(1, 0) saveLoadout.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, saveLoadout.MouseButton1Click:Connect(function() saveEquippedLoadout(loadoutBox.Text) refreshMorePopup() end))
+    QOL.makePanelLabel(loadouts, "LoadoutList", "", 92, 3)
+    local loadoutUseRow = row(loadouts, "LoadoutUseRow", 4)
+    local _, loadoutUseBox = makeNativeInput(loadoutUseRow, {Name = "LoadoutUseName", Size = UDim2.new(0.56, 0, 1, 0), Text = "", Placeholder = "Existing loadout name", ZIndex = 96})
+    local applyLoadoutButton = makeNativeButton(loadoutUseRow, {Name = "ApplyLoadout", Size = UDim2.new(0.20, 0, 1, 0), Text = "Apply", InnerColor = Color3.fromRGB(72, 118, 83), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    applyLoadoutButton.Position = UDim2.fromScale(0.58, 0)
+    local deleteLoadoutButton = makeNativeButton(loadoutUseRow, {Name = "DeleteLoadout", Size = UDim2.new(0.20, 0, 1, 0), Text = "Delete", InnerColor = Color3.fromRGB(130, 66, 66), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    deleteLoadoutButton.AnchorPoint = Vector2.new(1, 0) deleteLoadoutButton.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, applyLoadoutButton.MouseButton1Click:Connect(function() requestApplyLoadout(loadoutUseBox.Text) end))
+    addConnection(Controller.AttachConnections, deleteLoadoutButton.MouseButton1Click:Connect(function() deleteLoadout(loadoutUseBox.Text) refreshMorePopup() end))
+    local loadoutRenameRow = row(loadouts, "LoadoutRenameRow", 5)
+    local _, loadoutNewBox = makeNativeInput(loadoutRenameRow, {Name = "LoadoutNewName", Size = UDim2.new(0.56, 0, 1, 0), Text = "", Placeholder = "New loadout name", ZIndex = 96})
+    local renameButton = makeNativeButton(loadoutRenameRow, {Name = "RenameLoadout", Size = UDim2.new(0.20, 0, 1, 0), Text = "Rename", InnerColor = Color3.fromRGB(75, 92, 116), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    renameButton.Position = UDim2.fromScale(0.58, 0)
+    local duplicateButton2 = makeNativeButton(loadoutRenameRow, {Name = "DuplicateLoadout", Size = UDim2.new(0.20, 0, 1, 0), Text = "Duplicate", InnerColor = Color3.fromRGB(75, 92, 116), ZIndex = 96, MinTextSize = 7, MaxTextSize = 12})
+    duplicateButton2.AnchorPoint = Vector2.new(1, 0) duplicateButton2.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, renameButton.MouseButton1Click:Connect(function() QOL.renameLoadout(loadoutUseBox.Text, loadoutNewBox.Text, false) refreshMorePopup() end))
+    addConnection(Controller.AttachConnections, duplicateButton2.MouseButton1Click:Connect(function() QOL.renameLoadout(loadoutUseBox.Text, loadoutNewBox.Text, true) refreshMorePopup() end))
+    twoButtons(loadouts, 6, "SaveClassProfile", "Save Class Profile", QOL.saveClassProfile, "LoadClassProfile", "Load Class Profile", QOL.loadClassProfile)
+    local profileRow = row(loadouts, "ProfileRow", 7)
+    local _, profileBox = makeNativeInput(profileRow, {Name = "ProfileName", Size = UDim2.new(0.67, 0, 1, 0), Text = "", Placeholder = "Settings profile name", ZIndex = 96})
+    local saveProfile = makeNativeButton(profileRow, {Name = "SaveProfile", Size = UDim2.new(0.30, 0, 1, 0), Text = "Save Profile", InnerColor = Color3.fromRGB(75, 92, 116), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+    saveProfile.AnchorPoint = Vector2.new(1, 0) saveProfile.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, saveProfile.MouseButton1Click:Connect(function() QOL.saveSettingsProfile(profileBox.Text) refreshMorePopup() end))
+    QOL.makePanelLabel(loadouts, "ProfileList", "", 70, 8)
+    local profileUseRow = row(loadouts, "ProfileUseRow", 9)
+    local _, profileUseBox = makeNativeInput(profileUseRow, {Name = "ProfileUseName", Size = UDim2.new(0.56, 0, 1, 0), Text = "", Placeholder = "Settings profile name", ZIndex = 96})
+    local applyProfileButton = makeNativeButton(profileUseRow, {Name = "ApplyProfile", Size = UDim2.new(0.20, 0, 1, 0), Text = "Load", InnerColor = Color3.fromRGB(72, 118, 83), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    applyProfileButton.Position = UDim2.fromScale(0.58, 0)
+    local deleteProfileButton = makeNativeButton(profileUseRow, {Name = "DeleteProfile", Size = UDim2.new(0.20, 0, 1, 0), Text = "Delete", InnerColor = Color3.fromRGB(130, 66, 66), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    deleteProfileButton.AnchorPoint = Vector2.new(1, 0) deleteProfileButton.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, applyProfileButton.MouseButton1Click:Connect(function() QOL.applySettingsProfileByName(profileUseBox.Text) refreshMorePopup() end))
+    addConnection(Controller.AttachConnections, deleteProfileButton.MouseButton1Click:Connect(function() QOL.deleteSettingsProfileByName(profileUseBox.Text) refreshMorePopup() end))
 
-    task.defer(updateMoreCanvas)
+    local search = makePage("Search")
+    QOL.makePanelLabel(search, "SearchHelp", "ADVANCED SEARCH • rarity:legendary type:helmet class:mage roll:s new:true equipped:true locked:true favorite:true wishlist:true junk:true protected:true improvement:true uid:... stat>1000 pot>=5000 sell<100000 upgrade>=50 roi>0", 66, 1)
+    toggle(search, 2, "AdvancedSearch", "Advanced search syntax")
+    twoButtons(search, 3, "QuickS", "S Rolls", function() Controller.SearchText = "roll:s" applyAll() end, "QuickNew", "New Gear", function() Controller.SearchText = "new:true" applyAll() end)
+    twoButtons(search, 4, "QuickImprove", "Improvements", function() Controller.SearchText = "improvement:true" applyAll() end, "QuickLegend", "Legendary+", function() Controller.SearchText = "rarity:legendary" applyAll() end)
+    twoButtons(search, 5, "QuickUnprotected", "Unprotected", function() Controller.SearchText = "protected:false" applyAll() end, "QuickLoadout", "Loadout Items", function() Controller.SearchText = "loadout:true" applyAll() end)
+    local savedRow = row(search, "SavedSearchRow", 6)
+    local _, savedBox = makeNativeInput(savedRow, {Name = "SavedSearchName", Size = UDim2.new(0.67, 0, 1, 0), Text = "", Placeholder = "Saved search name", ZIndex = 96})
+    local saveSearch = makeNativeButton(savedRow, {Name = "SaveSearch", Size = UDim2.new(0.30, 0, 1, 0), Text = "Save Current", InnerColor = Color3.fromRGB(75, 92, 116), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+    saveSearch.AnchorPoint = Vector2.new(1, 0) saveSearch.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, saveSearch.MouseButton1Click:Connect(function() QOL.saveCurrentSearch(savedBox.Text) refreshMorePopup() end))
+    QOL.makePanelLabel(search, "SavedSearchList", "", 70, 7)
+    local savedUseRow = row(search, "SavedSearchUseRow", 8)
+    local _, savedUseBox = makeNativeInput(savedUseRow, {Name = "SavedSearchUseName", Size = UDim2.new(0.56, 0, 1, 0), Text = "", Placeholder = "Saved search name", ZIndex = 96})
+    local applySavedButton = makeNativeButton(savedUseRow, {Name = "ApplySavedSearch", Size = UDim2.new(0.20, 0, 1, 0), Text = "Apply", InnerColor = Color3.fromRGB(72, 118, 83), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    applySavedButton.Position = UDim2.fromScale(0.58, 0)
+    local deleteSavedButton = makeNativeButton(savedUseRow, {Name = "DeleteSavedSearch", Size = UDim2.new(0.20, 0, 1, 0), Text = "Delete", InnerColor = Color3.fromRGB(130, 66, 66), ZIndex = 96, MinTextSize = 8, MaxTextSize = 13})
+    deleteSavedButton.AnchorPoint = Vector2.new(1, 0) deleteSavedButton.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, applySavedButton.MouseButton1Click:Connect(function() QOL.applySavedSearch(savedUseBox.Text) refreshMorePopup() end))
+    addConnection(Controller.AttachConnections, deleteSavedButton.MouseButton1Click:Connect(function() QOL.deleteSavedSearch(savedUseBox.Text) refreshMorePopup() end))
+    QOL.makePanelLabel(search, "PinnedMeta", "", 52, 9)
+    local noteRow = row(search, "NoteRow", 10)
+    local _, noteBox = makeNativeInput(noteRow, {Name = "NoteInput", Size = UDim2.new(0.67, 0, 1, 0), Text = "", Placeholder = "Note for pinned/hovered item", ZIndex = 96})
+    local noteSave = makeNativeButton(noteRow, {Name = "SaveNote", Size = UDim2.new(0.30, 0, 1, 0), Text = "Save Note", InnerColor = Color3.fromRGB(75, 92, 116), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+    noteSave.AnchorPoint = Vector2.new(1, 0) noteSave.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, noteSave.MouseButton1Click:Connect(function() QOL.setPinnedMetadata(noteBox.Text, nil) refreshMorePopup() end))
+    local tagRow = row(search, "TagRow", 11)
+    local _, tagBox = makeNativeInput(tagRow, {Name = "TagInput", Size = UDim2.new(0.67, 0, 1, 0), Text = "", Placeholder = "Custom tag", ZIndex = 96})
+    local tagSave = makeNativeButton(tagRow, {Name = "SaveTag", Size = UDim2.new(0.30, 0, 1, 0), Text = "Save Tag", InnerColor = Color3.fromRGB(75, 92, 116), ZIndex = 96, MinTextSize = 8, MaxTextSize = 14})
+    tagSave.AnchorPoint = Vector2.new(1, 0) tagSave.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, tagSave.MouseButton1Click:Connect(function() QOL.setPinnedMetadata(nil, tagBox.Text) refreshMorePopup() end))
+    twoButtons(search, 12, "FavVisible", "Favorite Visible", function() QOL.bulkVisible("favorite", true) end, "LockVisible", "Lock Visible", function() QOL.bulkVisible("lock", true) end)
+    twoButtons(search, 13, "UnfavVisible", "Unfavorite Visible", function() QOL.bulkVisible("favorite", false) end, "UnlockVisible", "Unlock Visible", function() QOL.bulkVisible("lock", false) end)
+
+    local protect = makePage("Protect")
+    QOL.makePanelLabel(protect, "ProtectionSummary", "", 52, 1)
+    numeric(protect, 2, "KeepCopies", "Keep best copies per duplicate", "KeepCopies", 1, 20)
+    toggle(protect, 3, "ProtectSRolls", "Auto-protect S rolls")
+    toggle(protect, 4, "ProtectLegendary", "Auto-protect Legendary+")
+    toggle(protect, 5, "WishlistAutoLock", "Wishlist auto-lock")
+    numeric(protect, 6, "SellMax", "Auto-sell value ceiling (0 = off)", "AutoSellMaxValue", 0, 9e15)
+    numeric(protect, 7, "HighValue", "High-value sell warning (0 = off)", "HighValueWarning", 0, 9e15)
+    toggle(protect, 8, "AutoCleanupPrompt", "Capacity cleanup prompt")
+    local keepRuleRow = row(protect, "KeepRuleRow", 9)
+    local _, keepRuleName = makeNativeInput(keepRuleRow, {Name = "KeepRuleName", Size = UDim2.new(0.53, 0, 1, 0), Text = "", Placeholder = "Per-item keep rule name", ZIndex = 96})
+    local _, keepRuleCount = makeNativeInput(keepRuleRow, {Name = "KeepRuleCount", Size = UDim2.new(0.18, 0, 1, 0), Text = "2", Placeholder = "2", ZIndex = 96, TextXAlignment = Enum.TextXAlignment.Center})
+    keepRuleCount.Parent.Position = UDim2.fromScale(0.55, 0)
+    local setKeepButton = makeNativeButton(keepRuleRow, {Name = "SetKeepRule", Size = UDim2.new(0.12, 0, 1, 0), Text = "Set", InnerColor = Color3.fromRGB(72, 118, 83), ZIndex = 96, MinTextSize = 8, MaxTextSize = 12})
+    setKeepButton.Position = UDim2.fromScale(0.75, 0)
+    local clearKeepButton = makeNativeButton(keepRuleRow, {Name = "ClearKeepRule", Size = UDim2.new(0.11, 0, 1, 0), Text = "Clear", InnerColor = Color3.fromRGB(130, 66, 66), ZIndex = 96, MinTextSize = 8, MaxTextSize = 12})
+    clearKeepButton.AnchorPoint = Vector2.new(1, 0) clearKeepButton.Position = UDim2.fromScale(1, 0)
+    addConnection(Controller.AttachConnections, setKeepButton.MouseButton1Click:Connect(function() local name = keepRuleName.Text local info = QOL.selectedMetaInfo() if name == "" and info then name = info.Name end QOL.setKeepRule(name, keepRuleCount.Text) refreshMorePopup() end))
+    addConnection(Controller.AttachConnections, clearKeepButton.MouseButton1Click:Connect(function() local name = keepRuleName.Text local info = QOL.selectedMetaInfo() if name == "" and info then name = info.Name end QOL.clearKeepRule(name) refreshMorePopup() end))
+    QOL.makePanelLabel(protect, "KeepRuleList", "", 60, 10)
+    QOL.makePanelLabel(protect, "ProtectionHelp", "Smart Junk keeps the configured top copies, then also preserves every equipped, favorite, locked, loadout, wishlist, protected S-roll, and protected Legendary+ item. Protected extras can make a group retain more than the keep count.", 72, 11)
+
+    local history = makePage("History")
+    QOL.makePanelLabel(history, "SessionSummary", "", 60, 1)
+    QOL.makePanelLabel(history, "SessionStats", "", 48, 2)
+    QOL.makePanelLabel(history, "SnapshotDiff", "", 90, 3)
+    twoButtons(history, 4, "CaptureSnapshot2", "Capture Snapshot", QOL.captureInventorySnapshot, "ExportSession", "Export Session", QOL.exportSessionSummary)
+    QOL.makePanelLabel(history, "ActionLog", "", 180, 5)
+    QOL.makePanelLabel(history, "LootHistory2", "", 170, 6)
+    toggle(history, 7, "AutoExportSession", "Auto-export summary on script stop")
+
+    local ui = makePage("UI")
+    twoButtons(ui, 1, "ModeMinimal", "Minimal", function() QOL.applyUIMode("Minimal") refreshMorePopup() end, "ModeCompact", "Compact", function() QOL.applyUIMode("Compact") refreshMorePopup() end)
+    QOL.makePanelButton(ui, "ModeDetailed", "Detailed", 2, function() QOL.applyUIMode("Detailed") refreshMorePopup() end)
+    toggle(ui, 3, "HideBadges", "Hide all item badges")
+    toggle(ui, 4, "HideStatusBadge", "Hide roll/status badges")
+    toggle(ui, 5, "HideNewBadge", "Hide NEW badges")
+    toggle(ui, 6, "HideUpgradeBadge", "Hide upgrade/potential badges")
+    toggle(ui, 7, "HideProtectionBadge", "Hide protection badges")
+    toggle(ui, 8, "CompactTooltip", "Compact tooltips")
+    numeric(ui, 9, "TooltipSize", "Tooltip text size", "TooltipTextSize", 10, 22)
+    numeric(ui, 10, "GridScale", "Card/grid scale %", "GridScale", 70, 140)
+    numeric(ui, 11, "GridColumns", "Grid columns (0 = native)", "GridColumns", 0, 12)
+    numeric(ui, 12, "GoldMilestone", "Gold milestone (0 = off)", "GoldMilestone", 0, 9e15)
+    QOL.makePanelButton(ui, "ImportMode", "", 13, function() Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Replace" or "Merge" saveDiskState() refreshMorePopup() end)
+    twoButtons(ui, 14, "ExportButton", "Export Settings", exportSettings, "ImportButton", "Import Settings", requestImportSettings)
+
+    local active = Persistent.Settings.QOLTab
+    local valid = false
+    for _, name in ipairs(tabNames) do if name == active then valid = true end end
+    if not valid then active = "Overview" Persistent.Settings.QOLTab = active end
+    for name, page in pairs(pages) do page.Visible = name == active end
     return popup
 end
 
 refreshMorePopup = function()
     local popup = Controller.CurrentMorePopup
-    if not popup or not popup.Parent then
-        return
-    end
-
-    local inner = popup:FindFirstChild("Inner")
-    local content = inner and inner:FindFirstChild("Content")
-    if not content then
-        return
-    end
-
-    local loadoutList = content:FindFirstChild("LoadoutList")
-    if loadoutList then
-        for _, child in ipairs(loadoutList:GetChildren()) do
-            if not child:IsA("UIListLayout") then
-                child:Destroy()
-            end
-        end
-
-        local names = sortedLoadoutNames()
-        if #names == 0 then
-            local empty = makePanelLabel(loadoutList, "Empty", "No saved loadouts yet.", 25, 1)
-            empty.Size = UDim2.new(1, 0, 0, 25)
-        else
-            for index, name in ipairs(names) do
-                local preset = Persistent.Loadouts[name]
-                local count = 0
-                for _, slot in ipairs({"weapon", "chest", "helmet"}) do
-                    if preset[slot] then count += 1 end
-                end
-
-                local button = makeNativeButton(loadoutList, {
-                    Name = "Preset_" .. tostring(index),
-                    LayoutOrder = index,
-                    Size = UDim2.new(1, 0, 0, 30),
-                    Text = tostring(name) .. " • " .. tostring(count) .. "/3 pieces",
-                    InnerColor = Color3.fromRGB(75, 92, 116),
-                    ZIndex = 95,
-                    MinTextSize = 9,
-                    MaxTextSize = 14,
-                })
-
-                addConnection(Controller.AttachConnections, button.MouseButton1Click:Connect(function()
-                    requestApplyLoadout(name)
-                end))
-                addConnection(Controller.AttachConnections, button.MouseButton2Click:Connect(function()
-                    deleteLoadout(name)
-                end))
+    if not popup or not popup.Parent then return end
+    rebuildMetrics()
+    local pages = popup:FindFirstChild("Pages", true)
+    if not pages then return end
+    local active = tostring(Persistent.Settings.QOLTab or "Overview")
+    for _, page in ipairs(pages:GetChildren()) do if page:IsA("ScrollingFrame") then page.Visible = page.Name == active end end
+    local tabs = popup:FindFirstChild("Tabs", true)
+    if tabs then
+        for _, button in ipairs(tabs:GetChildren()) do
+            if button:IsA("TextButton") then
+                local name = button.Name:gsub("^Tab_", "")
+                local face = button:FindFirstChild("DQInner")
+                if face then setPlateColor(face, name == active and Color3.fromRGB(87, 112, 145) or Color3.fromRGB(68, 78, 92)) end
             end
         end
     end
 
-    local toggleDefs = {
-        {"UpgradeWeapon", "Upgrade weapon"},
-        {"UpgradeChest", "Upgrade chest"},
-        {"UpgradeHelmet", "Upgrade helmet"},
-        {"HideBadges", "Hide item badges"},
-        {"CompactTooltip", "Compact tooltips"},
-    }
+    local function setLabel(name, value)
+        local obj = popup:FindFirstChild(name, true)
+        if obj and obj:IsA("TextLabel") then obj.Text = value end
+    end
+    setLabel("OverviewSummary", QOL.inventoryOverviewText())
+    setLabel("LoadoutCompare", QOL.fullLoadoutComparisonText())
+    setLabel("CleanupPreview", QOL.cleanupPreviewText())
+    setLabel("QueueSummary", QOL.queueText())
+    setLabel("CompareSummary", QOL.compareSelectionText())
+    setLabel("LootSummary", sessionLootSummaryText())
+    setLabel("LootHistory", QOL.lootHistoryText())
+    setLabel("UpgradeAnalytics", QOL.topUpgradeTargetsText())
+    setLabel("LoadoutSummary", QOL.fullLoadoutComparisonText())
+    setLabel("ProtectionSummary", QOL.protectionSummaryText())
+    local keepParts = {}
+    for key, count in pairs(Persistent.KeepRules or {}) do keepParts[#keepParts + 1] = tostring(key) .. "=" .. tostring(count) end
+    table.sort(keepParts)
+    setLabel("KeepRuleList", "PER-ITEM KEEP RULES • " .. (#keepParts > 0 and table.concat(keepParts, ", ") or "none"))
+    setLabel("SessionSummary", sessionLootSummaryText())
+    local stats = Controller.SessionStats or {}
+    setLabel("SessionStats", "SESSION ACTIONS • equipped " .. tostring(stats.Equipped or 0) .. " • upgrades " .. tostring(stats.Upgrades or 0) .. " • upgrade gold " .. formatCompact(stats.UpgradeGold or 0) .. " • sold " .. tostring(stats.Sold or 0) .. " • sell value " .. formatCompact(stats.SellGold or 0))
+    setLabel("SnapshotDiff", QOL.snapshotDiffText())
+    setLabel("ActionLog", actionLogText())
+    setLabel("LootHistory2", QOL.lootHistoryText())
 
-    for _, def in ipairs(toggleDefs) do
-        local key, label = def[1], def[2]
-        local button = content:FindFirstChild("Toggle_" .. key)
-        if button and button:IsA("TextButton") then
-            button.Text = label .. ": " .. (Persistent.Settings[key] == true and "ON" or "OFF")
-            local innerButton = button:FindFirstChild("DQInner")
-            if innerButton then
-                setPlateColor(
-                    innerButton,
-                    Persistent.Settings[key] == true and Color3.fromRGB(79, 118, 91)
-                        or Color3.fromRGB(72, 72, 72)
-                )
-            end
+    local wishNames = {}
+    for _, display in pairs(Persistent.Wishlist or {}) do wishNames[#wishNames + 1] = tostring(display) end
+    table.sort(wishNames)
+    setLabel("WishlistList", "WISHLIST • " .. (#wishNames > 0 and table.concat(wishNames, ", ") or "empty"))
+
+    local saved = {}
+    for name, query in pairs(Persistent.SavedSearches or {}) do saved[#saved + 1] = tostring(name) .. " = " .. tostring(query) end
+    table.sort(saved)
+    setLabel("SavedSearchList", "SAVED SEARCHES\n" .. (#saved > 0 and table.concat(saved, "\n") or "none"))
+
+    local profiles = {}
+    for name in pairs(Persistent.SettingsProfiles or {}) do profiles[#profiles + 1] = tostring(name) end
+    table.sort(profiles)
+    setLabel("ProfileList", "SETTINGS PROFILES • " .. (#profiles > 0 and table.concat(profiles, ", ") or "none"))
+
+    local loadoutNames = sortedLoadoutNames()
+    setLabel("LoadoutList", "SAVED LOADOUTS • " .. (#loadoutNames > 0 and table.concat(loadoutNames, ", ") or "none") .. "\nEnter a name below to apply/delete; use a new name to rename/duplicate.")
+
+    local info = QOL.selectedMetaInfo()
+    setLabel("PinnedMeta", info and ("PINNED / HOVERED • " .. tostring(info.Name) .. " • UID " .. tostring(info.UID) .. (info.CustomTag ~= "" and (" • tag " .. info.CustomTag) or "") .. (info.Note ~= "" and ("\nNote: " .. info.Note) or "")) or "PINNED / HOVERED • none")
+
+    for _, obj in ipairs(popup:GetDescendants()) do
+        if obj:IsA("TextButton") and obj.Name:match("^Toggle_") then
+            local key = obj.Name:gsub("^Toggle_", "")
+            local labels = {
+                DropNotifications = "Drop notifications", WishlistNotifications = "Wishlist notifications", SRollNotifications = "S-roll notifications", LegendaryNotifications = "Legendary+ notifications",
+                AdvancedSearch = "Advanced search syntax", RequireBetterNow = "Auto Equip must also be better now", UpgradeWeapon = "Upgrade weapon", UpgradeChest = "Upgrade chest", UpgradeHelmet = "Upgrade helmet",
+                ProtectSRolls = "Auto-protect S rolls", ProtectLegendary = "Auto-protect Legendary+", WishlistAutoLock = "Wishlist auto-lock", AutoCleanupPrompt = "Capacity cleanup prompt",
+                AutoExportSession = "Auto-export summary on script stop", HideBadges = "Hide all item badges", HideStatusBadge = "Hide roll/status badges", HideNewBadge = "Hide NEW badges",
+                HideUpgradeBadge = "Hide upgrade/potential badges", HideProtectionBadge = "Hide protection badges", CompactTooltip = "Compact tooltips",
+            }
+            obj.Text = tostring(labels[key] or key) .. ": " .. (Persistent.Settings[key] == true and "ON" or "OFF")
+            local face = obj:FindFirstChild("DQInner")
+            if face then setPlateColor(face, Persistent.Settings[key] == true and Color3.fromRGB(79, 118, 91) or Color3.fromRGB(72, 72, 72)) end
+        elseif obj:IsA("TextBox") and obj.Parent and obj.Parent.Name:match("^SettingInput_") then
+            local key = obj.Parent.Name:gsub("^SettingInput_", "")
+            if not obj:IsFocused() and Persistent.Settings[key] ~= nil then obj.Text = tostring(Persistent.Settings[key]) end
         end
     end
 
-    local session = content:FindFirstChild("SessionSummary")
-    if session and session:IsA("TextLabel") then
-        session.Text = sessionLootSummaryText()
-    end
-
-    local log = content:FindFirstChild("ActionLog")
-    if log and log:IsA("TextLabel") then
-        log.Text = actionLogText()
-    end
+    local importMode = popup:FindFirstChild("ImportMode", true)
+    if importMode and importMode:IsA("TextButton") then importMode.Text = "Import mode: " .. tostring(Persistent.Settings.ImportMode) end
+    local review = popup:FindFirstChild("ToggleReview", true)
+    if review and review:IsA("TextButton") then review.Text = "Review New Loot: " .. (Controller.ReviewLootOnly and "ON" or "OFF") end
 end
+
 
 toggleMorePopup = function()
     local popup = Controller.CurrentMorePopup
@@ -6216,7 +7369,7 @@ showDuplicateComparison = function(sourceInfo)
     end
 end
 
-local function makeActionProgress(rightSide)
+function QOL.makeActionProgress(rightSide)
     local strip = Instance.new("Frame")
     strip.Name = "DQActionProgress"
     strip.AnchorPoint = Vector2.new(0.5, 0)
@@ -6291,7 +7444,7 @@ updateActionVisuals = function()
     end
 end
 
-local function makeActionBar(rightSide)
+function QOL.makeActionBar(rightSide)
     local old = rightSide:FindFirstChild("DQInventoryActions")
     if old then
         old:Destroy()
@@ -6392,9 +7545,9 @@ local function makeActionBar(rightSide)
     return bar
 end
 
-----------------------------------------------------------------
--- Reindex / cleanup / attach
-----------------------------------------------------------------
+
+
+
 
 reindexCards = function()
     local scroll = Controller.CurrentScroll
@@ -6403,7 +7556,7 @@ reindexCards = function()
         return
     end
 
-    -- One expensive inventory-table refresh for the entire batch.
+    
     refreshInventoryData()
 
     local liveCards = {}
@@ -6419,9 +7572,9 @@ reindexCards = function()
                 local existing = Controller.CardInfo[card]
 
                 if existing then
-                    -- Reuse all existing signals/overlays. Only refresh the
-                    -- record reference in case Dungeon Quest replaced its
-                    -- local inventory table.
+                    
+                    
+                    
                     existing.ItemType = itemType
                     existing.ItemNumber = itemNumber
 
@@ -6429,14 +7582,14 @@ reindexCards = function()
                         existing.Item = item
                     end
                 elseif item then
-                    -- Only genuinely new cards need new signals/overlays.
+                    
                     bindCard(card)
                 end
             end
         end
     end
 
-    -- Drop stale lookup entries without rebuilding every surviving card.
+    
     for card in pairs(Controller.CardInfo) do
         if not liveCards[card] or not card.Parent then
             Controller.CardInfo[card] = nil
@@ -6450,45 +7603,46 @@ reindexCards = function()
     refreshSellShopLocks()
 end
 
--- Dungeon Quest adds several cards and fires inventory refresh events in a
--- tight burst when dungeon rewards arrive. v8 refreshed once PER event.
--- v9 waits for a short quiet period, then performs exactly one reindex.
-local inventoryRefreshGeneration = 0
-local inventoryRefreshRunning = false
-local inventoryRefreshQueued = false
+
+
+
+QOL.inventoryRefreshGeneration = 0
+QOL.inventoryRefreshRunning = false
+QOL.inventoryRefreshQueued = false
 
 scheduleInventoryRefresh = function(delaySeconds)
-    inventoryRefreshGeneration += 1
-    local generation = inventoryRefreshGeneration
+    QOL.inventoryRefreshGeneration += 1
+    local generation = QOL.inventoryRefreshGeneration
 
     task.delay(delaySeconds or 0.18, function()
-        if not Controller.Alive or generation ~= inventoryRefreshGeneration then
+        if not Controller.Alive or generation ~= QOL.inventoryRefreshGeneration then
             return
         end
 
-        if inventoryRefreshRunning then
-            inventoryRefreshQueued = true
+        if QOL.inventoryRefreshRunning then
+            QOL.inventoryRefreshQueued = true
             return
         end
 
-        inventoryRefreshRunning = true
+        QOL.inventoryRefreshRunning = true
 
         local ok, err = pcall(reindexCards)
 
-        inventoryRefreshRunning = false
+        QOL.inventoryRefreshRunning = false
 
         if not ok then
-            warn("[DQ Inventory QOL v18.6] batched refresh error:", err)
+            warn("[DQ Inventory QOL v19.1] batched refresh error:", err)
         end
 
-        if inventoryRefreshQueued and Controller.Alive then
-            inventoryRefreshQueued = false
+        if QOL.inventoryRefreshQueued and Controller.Alive then
+            QOL.inventoryRefreshQueued = false
             scheduleInventoryRefresh(0.08)
         end
     end)
 end
 
-local function cleanupAttachment()
+function QOL.cleanupAttachment()
+    clearEquippedBindings()
     disconnectAll(Controller.AttachConnections)
     unbindCards(true)
 
@@ -6509,6 +7663,7 @@ local function cleanupAttachment()
             local grid = scroll:FindFirstChildOfClass("UIGridLayout")
             if grid and Controller.OriginalGridSortOrder then
                 grid.SortOrder = Controller.OriginalGridSortOrder
+                if Controller.OriginalGridCellSize then grid.CellSize = Controller.OriginalGridCellSize end
             end
 
             for _, child in ipairs(scroll:GetChildren()) do
@@ -6577,8 +7732,8 @@ local function cleanupAttachment()
         end)
     end
 
-    -- Restore Dungeon Quest's native tooltip ZIndex values before removing our
-    -- addon tooltip so reinjection/stop never leaves the native UI modified.
+    
+    
     restoreNativeTooltipStack()
 
     if Controller.TooltipExtra and Controller.TooltipExtra.Parent then
@@ -6605,12 +7760,14 @@ local function cleanupAttachment()
     Controller.OriginalScrollSize = nil
     Controller.OriginalScrollZIndex = nil
     Controller.OriginalGridSortOrder = nil
+    Controller.OriginalGridCellSize = nil
     Controller.HoveredCard = nil
+    Controller.HoveredEquippedInfo = nil
 
     table.clear(Controller.TargetLayoutOrder)
 end
 
-local function attachInventory(gui)
+function QOL.attachInventory(gui)
     if not Controller.Alive or not gui or not gui.Parent then
         return
     end
@@ -6622,7 +7779,7 @@ local function attachInventory(gui)
         return
     end
 
-    cleanupAttachment()
+    QOL.cleanupAttachment()
 
     local mainBackground = gui:FindFirstChild("mainBackground")
     local innerBackground = mainBackground
@@ -6649,27 +7806,28 @@ local function attachInventory(gui)
     local grid = scroll:FindFirstChildOfClass("UIGridLayout")
     if grid then
         Controller.OriginalGridSortOrder = grid.SortOrder
+        Controller.OriginalGridCellSize = grid.CellSize
         grid.SortOrder = Enum.SortOrder.LayoutOrder
     end
 
-    -- Three native control rows plus a compact action-progress strip.
+    
     scroll.AnchorPoint = Vector2.new(0.5, 0.5)
     scroll.Position = UDim2.new(0.5, 0, 0.655, 0)
     scroll.Size = UDim2.new(0.97, 0, 0.63, 0)
 
     Controller.CurrentClassBar = makeClassBar(rightSide)
     Controller.CurrentToolbar = makeToolbar(rightSide)
-    Controller.CurrentActionBar = makeActionBar(rightSide)
-    Controller.CurrentActionProgress = makeActionProgress(rightSide)
+    Controller.CurrentActionBar = QOL.makeActionBar(rightSide)
+    Controller.CurrentActionProgress = QOL.makeActionProgress(rightSide)
     Controller.CurrentSortPopup = buildSortPopup(rightSide)
     Controller.CurrentFilterPopup = buildFilterPopup(rightSide)
     Controller.CurrentConfirmPopup = buildConfirmPopup(rightSide)
-    Controller.CurrentMorePopup = buildMorePopup(rightSide)
+    Controller.CurrentMorePopup = QOL.buildMorePopup(rightSide)
     refreshMorePopup()
 
-    -- Ensure the game's own tooltip root is above the inventory subtree from
-    -- the moment the QOL UI attaches. updateHoveredTooltip() reapplies this in
-    -- case the game recreates/resets tooltip descendants later.
+    
+    
+    
     promoteNativeTooltipStack(gui)
 
     bindAllCards(scroll)
@@ -6680,7 +7838,7 @@ local function attachInventory(gui)
             return
         end
 
-        -- UIGridLayout / decorative children do not require an inventory pass.
+        
         if child:IsA("GuiObject") then
             scheduleInventoryRefresh(0.18)
         end
@@ -6688,14 +7846,14 @@ local function attachInventory(gui)
 
     addConnection(Controller.AttachConnections, gui.AncestryChanged:Connect(function(_, parent)
         if not parent and Controller.CurrentGui == gui then
-            cleanupAttachment()
+            QOL.cleanupAttachment()
         end
     end))
 
     local tooltipAccumulator = 0
 
     addConnection(Controller.AttachConnections, RunService.RenderStepped:Connect(function(dt)
-        if not Controller.HoveredCard then
+        if not Controller.HoveredCard and not Controller.HoveredEquippedInfo then
             tooltipAccumulator = 0
             return
         end
@@ -6721,7 +7879,7 @@ local function attachInventory(gui)
     end
 
     print(string.format(
-        "[DQ Inventory QOL v18.6] attached | Mage %d | Warrior %d | Tank %d | Authoritative items %d | Native cards %d",
+        "[DQ Inventory QOL v19.1] attached | Mage %d | Warrior %d | Tank %d | Authoritative items %d | Native cards %d",
         counts.Mage,
         counts.Warrior,
         counts.Tank,
@@ -6730,9 +7888,9 @@ local function attachInventory(gui)
     ))
 end
 
-----------------------------------------------------------------
--- Controller stop
-----------------------------------------------------------------
+
+
+
 
 function Controller:Stop()
     if not self.Alive then
@@ -6742,7 +7900,7 @@ function Controller:Stop()
     self.Alive = false
 
     saveDiskState()
-    cleanupAttachment()
+    QOL.cleanupAttachment()
     cleanupSellShop()
     disconnectAll(self.GlobalConnections)
 
@@ -6750,21 +7908,21 @@ function Controller:Stop()
         ENV[CONTROLLER_KEY] = nil
     end
 
-    print("[DQ Inventory QOL v18.6] stopped")
+    print("[DQ Inventory QOL v19.1] stopped")
 end
 
-----------------------------------------------------------------
--- Persistent bootstrap
-----------------------------------------------------------------
 
-local function tryAttachInventory()
+
+
+
+function QOL.tryAttachInventory()
     local gui = playerGui:FindFirstChild("inventory")
     if gui and gui:IsA("ScreenGui") then
-        task.defer(attachInventory, gui)
+        task.defer(QOL.attachInventory, gui)
     end
 end
 
-local function tryAttachSellShop()
+function QOL.tryAttachSellShop()
     local gui = playerGui:FindFirstChild("sellShop")
     if gui and gui:IsA("ScreenGui") then
         task.defer(attachSellShop, gui)
@@ -6775,7 +7933,7 @@ addConnection(Controller.GlobalConnections, playerGui.ChildAdded:Connect(functio
     if child.Name == "inventory" and child:IsA("ScreenGui") then
         task.defer(function()
             task.wait()
-            attachInventory(child)
+            QOL.attachInventory(child)
         end)
     elseif child.Name == "sellShop" and child:IsA("ScreenGui") then
         task.defer(function()
@@ -6785,10 +7943,10 @@ addConnection(Controller.GlobalConnections, playerGui.ChildAdded:Connect(functio
     end
 end))
 
-local remotes = ReplicatedStorage:FindFirstChild("remotes")
+QOL.remotes = ReplicatedStorage:FindFirstChild("remotes")
 
-local function listenForInventoryRefresh(remoteName)
-    local remote = remotes and remotes:FindFirstChild(remoteName)
+function QOL.listenForInventoryRefresh(remoteName)
+    local remote = QOL.remotes and QOL.remotes:FindFirstChild(remoteName)
 
     if remote and remote:IsA("RemoteEvent") then
         addConnection(Controller.GlobalConnections, remote.OnClientEvent:Connect(function()
@@ -6797,13 +7955,13 @@ local function listenForInventoryRefresh(remoteName)
     end
 end
 
-listenForInventoryRefresh("updateLocalInventoryTable")
-listenForInventoryRefresh("reloadInventory")
+QOL.listenForInventoryRefresh("updateLocalInventoryTable")
+QOL.listenForInventoryRefresh("reloadInventory")
 
-tryAttachInventory()
-tryAttachSellShop()
+QOL.tryAttachInventory()
+QOL.tryAttachSellShop()
 
-local function tryRunPendingAutoUpgrade()
+function QOL.tryRunPendingAutoUpgrade()
     if not Controller.Alive
         or Controller.PendingAutoUpgradeRunning
         or not Controller.PendingAutoUpgradeClass
@@ -6815,8 +7973,8 @@ local function tryRunPendingAutoUpgrade()
     Controller.PendingAutoUpgradeRunning = true
 
     task.spawn(function()
-        -- Give the authoritative inventory GUI/table time to initialize
-        -- after teleporting back to the lobby.
+        
+        
         task.wait(1.25)
 
         if not Controller.Alive
@@ -6834,8 +7992,8 @@ local function tryRunPendingAutoUpgrade()
             pcall(reindexCards)
         end
 
-        -- Build the normal confirmation/action, then auto-accept it because
-        -- the user already confirmed the intent when queueing in the dungeon.
+        
+        
         local confirmationCreated = requestAutoUpgradeBest()
 
         task.wait(0.10)
@@ -6856,26 +8014,26 @@ local function tryRunPendingAutoUpgrade()
 
             callback()
         else
-            -- Nothing to upgrade / not enough gold / another validation
-            -- message has already been shown by requestAutoUpgradeBest().
+            
+            
             Controller.PendingAutoUpgradeRunning = false
         end
     end)
 end
 
-task.delay(1.5, tryRunPendingAutoUpgrade)
+task.delay(1.5, QOL.tryRunPendingAutoUpgrade)
 
-print("[DQ Inventory QOL v18.6] loaded")
-print("[DQ Inventory QOL v18.6] dungeon Auto Upgrade now queues for Lobby")
-print("[DQ Inventory QOL v18.6] place = " .. getDQPlaceName())
-print("[DQ Inventory QOL v18.6] sequential potential + truthful progress + counted upgrade plans")
-print("[DQ Inventory QOL v18.6] Auto Sell Junk now clears every duplicate layer")
-print("[DQ Inventory QOL v18.6] Smart Junk now marks only one worst duplicate")
-print("[DQ Inventory QOL v18.6] Skills category + level sorting enabled")
-print("[DQ Inventory QOL v18.6] authoritative potential + stale-card safety enabled")
-print("[DQ Inventory QOL v18.6] verified sale removals + marginal-budget Auto Upgrade enabled")
-print("[DQ Inventory QOL v18.6] batched reward refresh + O(1) efficiency math enabled")
-print("[DQ Inventory QOL v18.6] persistent UI state enabled")
-print("[DQ Inventory QOL v18.6] ★ left-click favorite | ★ right-click lock")
-print("[DQ Inventory QOL v18.6] native tooltip ZIndex promotion enabled")
-print("[DQ Inventory QOL v18.6] More-panel overflow guard + native-style controls enabled")
+print("[DQ Inventory QOL v19.1] loaded")
+print("[DQ Inventory QOL v19.1] dungeon Auto Upgrade now queues for Lobby")
+print("[DQ Inventory QOL v19.1] place = " .. getDQPlaceName())
+print("[DQ Inventory QOL v19.1] sequential potential + truthful progress + counted upgrade plans")
+print("[DQ Inventory QOL v19.1] Auto Sell Junk now clears every duplicate layer")
+print("[DQ Inventory QOL v19.1] Smart Junk now marks only one worst duplicate")
+print("[DQ Inventory QOL v19.1] Skills category + level sorting enabled")
+print("[DQ Inventory QOL v19.1] authoritative potential + stale-card safety enabled")
+print("[DQ Inventory QOL v19.1] verified sale removals + marginal-budget Auto Upgrade enabled")
+print("[DQ Inventory QOL v19.1] batched reward refresh + O(1) efficiency math enabled")
+print("[DQ Inventory QOL v19.1] persistent UI state enabled")
+print("[DQ Inventory QOL v19.1] ★ left-click favorite | ★ right-click lock")
+print("[DQ Inventory QOL v19.1] native tooltip ZIndex promotion enabled")
+print("[DQ Inventory QOL v19.1] More-panel overflow guard + native-style controls enabled")
