@@ -92,6 +92,8 @@ if type(Persistent) ~= "table" then
         LootHistory = {},
         KnownIDs = {},
         NewIDs = {},
+        SeenSpellNames = {},
+        SeenSpellsInitialized = false,
         KnownInitialized = false,
         SeededKnownIDs = false,
         UIState = {
@@ -122,6 +124,7 @@ if type(Persistent) ~= "table" then
             AutoSellMaxValue = 0, 
             HideBadges = false,
             CompactTooltip = false,
+            HideDisplayName = false,
             TooltipTextSize = 13,
             KeepCopies = 1,
             ProtectSRolls = true,
@@ -177,6 +180,8 @@ Persistent.ItemFirstSeen = type(Persistent.ItemFirstSeen) == "table" and Persist
 Persistent.LootHistory = type(Persistent.LootHistory) == "table" and Persistent.LootHistory or {}
 Persistent.KnownIDs = Persistent.KnownIDs or {}
 Persistent.NewIDs = Persistent.NewIDs or {}
+Persistent.SeenSpellNames = type(Persistent.SeenSpellNames) == "table" and Persistent.SeenSpellNames or {}
+Persistent.SeenSpellsInitialized = Persistent.SeenSpellsInitialized == true
 Persistent.KnownInitialized = Persistent.KnownInitialized == true
 Persistent.UIState = Persistent.UIState or {
     ClassFilter = "",
@@ -225,6 +230,7 @@ Persistent.Settings.AutoSellMaxValue =
     math.max(0, tonumber(Persistent.Settings.AutoSellMaxValue) or 0)
 Persistent.Settings.HideBadges = Persistent.Settings.HideBadges == true
 Persistent.Settings.CompactTooltip = Persistent.Settings.CompactTooltip == true
+Persistent.Settings.HideDisplayName = Persistent.Settings.HideDisplayName == true
 Persistent.Settings.TooltipTextSize = math.clamp(
     math.floor(tonumber(Persistent.Settings.TooltipTextSize) or 13),
     10,
@@ -420,6 +426,13 @@ local function loadDiskState()
         Persistent.NewIDs = data.NewIDs
     end
 
+    if type(data.SeenSpellNames) == "table" then
+        Persistent.SeenSpellNames = data.SeenSpellNames
+    end
+    if data.SeenSpellsInitialized == true then
+        Persistent.SeenSpellsInitialized = true
+    end
+
     if data.KnownInitialized == true then
         Persistent.KnownInitialized = true
     end
@@ -434,6 +447,8 @@ local function loadDiskState()
     Persistent.ClassProfiles = type(Persistent.ClassProfiles) == "table" and Persistent.ClassProfiles or {}
     Persistent.ItemFirstSeen = type(Persistent.ItemFirstSeen) == "table" and Persistent.ItemFirstSeen or {}
     Persistent.LootHistory = type(Persistent.LootHistory) == "table" and Persistent.LootHistory or {}
+    Persistent.SeenSpellNames = type(Persistent.SeenSpellNames) == "table" and Persistent.SeenSpellNames or {}
+    Persistent.SeenSpellsInitialized = Persistent.SeenSpellsInitialized == true
     Persistent.UIState = Persistent.UIState or {
         ClassFilter = "",
         SearchText = "",
@@ -491,6 +506,7 @@ local function loadDiskState()
     Persistent.Settings.HideNewBadge = Persistent.Settings.HideNewBadge == true
     Persistent.Settings.HideUpgradeBadge = Persistent.Settings.HideUpgradeBadge == true
     Persistent.Settings.HideProtectionBadge = Persistent.Settings.HideProtectionBadge == true
+    Persistent.Settings.HideDisplayName = Persistent.Settings.HideDisplayName == true
     Persistent.Settings.DropNotifications = Persistent.Settings.DropNotifications ~= false
     Persistent.Settings.WishlistNotifications = Persistent.Settings.WishlistNotifications ~= false
     Persistent.Settings.SRollNotifications = Persistent.Settings.SRollNotifications == true
@@ -538,6 +554,8 @@ local function saveDiskState()
         UIState = Persistent.UIState,
         KnownIDs = Persistent.KnownIDs,
         NewIDs = Persistent.NewIDs,
+        SeenSpellNames = Persistent.SeenSpellNames,
+        SeenSpellsInitialized = Persistent.SeenSpellsInitialized == true,
         KnownInitialized = Persistent.KnownInitialized == true,
     }
 
@@ -2695,6 +2713,33 @@ local function rebuildMetrics()
 
     Controller.InventoryInfos = allInfos
     Controller.InventoryInfoByUID = byUID
+
+    if not Persistent.SeenSpellsInitialized then
+        for _, info in ipairs(allInfos) do
+            if info.ItemType == "ability" then
+                local spellKey = lower(info.Name):gsub("^%s+", ""):gsub("%s+$", "")
+                if spellKey ~= "" then
+                    Persistent.SeenSpellNames[spellKey] = true
+                end
+            end
+        end
+        Persistent.SeenSpellsInitialized = true
+        scheduleDiskStateSave(0.15)
+    else
+        for _, info in ipairs(allInfos) do
+            if info.ItemType == "ability" then
+                local spellKey = lower(info.Name):gsub("^%s+", ""):gsub("%s+$", "")
+                if spellKey ~= "" and not Persistent.SeenSpellNames[spellKey] then
+                    Persistent.SeenSpellNames[spellKey] = true
+                    qolNotify(
+                        "New Spell Discovered",
+                        tostring(info.Name) .. " • first time obtained"
+                    )
+                    scheduleDiskStateSave(0.15)
+                end
+            end
+        end
+    end
 
     
     local equippedInfo = {}
@@ -5885,7 +5930,7 @@ local function executeUpgradePlan(plan)
         if not ok then
             stopReason =
                 "An error stopped the action; check the native inventory before trying again."
-            warn("[DQ Inventory QOL v19.1] upgrade stopped:", err)
+            warn("[DQ Inventory QOL v19.2] upgrade stopped:", err)
         end
 
         if actualPurchased > 0
@@ -6308,7 +6353,7 @@ local function executeSellJunk(plan)
 
         if not ok then
             stopReason = "An error stopped selling; unconfirmed removals were not counted or retried."
-            warn("[DQ Inventory QOL v19.1] sell stopped:", err)
+            warn("[DQ Inventory QOL v19.2] sell stopped:", err)
         end
 
         local stopped = Controller.ActionCancelRequested
@@ -6965,6 +7010,84 @@ local function actionLogText()
 end
 
 local QOL = {}
+
+QOL.DisplayNameOriginals = setmetatable({}, {__mode = "k"})
+QOL.DisplayNameAccumulator = 0
+QOL.DisplayNameAlias = "Inventory+"
+
+function QOL.maskDisplayNameText(value)
+    local result = tostring(value or "")
+    local names = {tostring(player.DisplayName or ""), tostring(player.Name or "")}
+    table.sort(names, function(a, b) return #a > #b end)
+
+    for _, rawName in ipairs(names) do
+        if rawName ~= "" then
+            local loweredName = string.lower(rawName)
+            local cursor = 1
+            local rebuilt = {}
+
+            while cursor <= #result do
+                local loweredResult = string.lower(result)
+                local first, last = string.find(loweredResult, loweredName, cursor, true)
+                if not first then
+                    rebuilt[#rebuilt + 1] = string.sub(result, cursor)
+                    break
+                end
+
+                rebuilt[#rebuilt + 1] = string.sub(result, cursor, first - 1)
+                rebuilt[#rebuilt + 1] = QOL.DisplayNameAlias
+                cursor = last + 1
+            end
+
+            if #rebuilt > 0 then
+                result = table.concat(rebuilt)
+            end
+        end
+    end
+
+    return result
+end
+
+function QOL.applyDisplayNameToObject(obj)
+    if not obj or not obj.Parent then return end
+    if not (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then return end
+
+    local enabled = Persistent.Settings.HideDisplayName == true
+    local current = tostring(obj.Text or "")
+    local saved = QOL.DisplayNameOriginals[obj]
+
+    if enabled then
+        local masked = QOL.maskDisplayNameText(current)
+        if masked ~= current then
+            QOL.DisplayNameOriginals[obj] = current
+            obj.Text = masked
+        elseif saved and current ~= QOL.maskDisplayNameText(saved) then
+            QOL.DisplayNameOriginals[obj] = nil
+        end
+    elseif saved then
+        if current == QOL.maskDisplayNameText(saved) then
+            obj.Text = saved
+        end
+        QOL.DisplayNameOriginals[obj] = nil
+    end
+end
+
+function QOL.applyDisplayNameHider(includeCore)
+    local roots = {playerGui, player.Character}
+    if includeCore == true then
+        local okCore, coreGui = pcall(function() return game:GetService("CoreGui") end)
+        if okCore and coreGui then roots[#roots + 1] = coreGui end
+    end
+
+    for _, root in ipairs(roots) do
+        if root then
+            QOL.applyDisplayNameToObject(root)
+            for _, obj in ipairs(root:GetDescendants()) do
+                QOL.applyDisplayNameToObject(obj)
+            end
+        end
+    end
+end
 
 function QOL.makePanelLabel(parent, name, textValue, height, layoutOrder)
     local label = Instance.new("TextLabel")
@@ -7672,6 +7795,7 @@ function QOL.buildMorePopup(rightSide)
         return QOL.makePanelButton(parent, "Toggle_" .. key, "", order, function()
             Persistent.Settings[key] = not (Persistent.Settings[key] == true)
             saveDiskState()
+            if key == "HideDisplayName" then QOL.applyDisplayNameHider(true) end
             rebuildMetrics()
             applyAll()
             refreshMorePopup()
@@ -7841,12 +7965,13 @@ function QOL.buildMorePopup(rightSide)
     toggle(ui, 7, "HideProtectionBadge", "Hide protection badges")
     toggle(ui, 8, "HideGodpotPct", "Hide roll % on badges")
     toggle(ui, 9, "CompactTooltip", "Compact tooltips")
-    numeric(ui, 10, "TooltipSize", "Tooltip text size", "TooltipTextSize", 10, 22)
-    numeric(ui, 11, "GridScale", "Card/grid scale %", "GridScale", 70, 140)
-    numeric(ui, 12, "GridColumns", "Grid columns (0 = native)", "GridColumns", 0, 12)
-    numeric(ui, 13, "GoldMilestone", "Gold milestone (0 = off)", "GoldMilestone", 0, 9e15)
-    QOL.makePanelButton(ui, "ImportMode", "", 14, function() Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Replace" or "Merge" saveDiskState() refreshMorePopup() end)
-    twoButtons(ui, 15, "ExportButton", "Export Settings", exportSettings, "ImportButton", "Import Settings", requestImportSettings)
+    toggle(ui, 10, "HideDisplayName", "Display name hider (Inventory+)")
+    numeric(ui, 11, "TooltipSize", "Tooltip text size", "TooltipTextSize", 10, 22)
+    numeric(ui, 12, "GridScale", "Card/grid scale %", "GridScale", 70, 140)
+    numeric(ui, 13, "GridColumns", "Grid columns (0 = native)", "GridColumns", 0, 12)
+    numeric(ui, 14, "GoldMilestone", "Gold milestone (0 = off)", "GoldMilestone", 0, 9e15)
+    QOL.makePanelButton(ui, "ImportMode", "", 15, function() Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Replace" or "Merge" saveDiskState() refreshMorePopup() end)
+    twoButtons(ui, 16, "ExportButton", "Export Settings", exportSettings, "ImportButton", "Import Settings", requestImportSettings)
 
     local active = Persistent.Settings.QOLTab
     local valid = false
@@ -7930,7 +8055,7 @@ refreshMorePopup = function()
                 ProtectSRolls = "Auto-protect S rolls", ProtectGodpots = "Auto-protect godpots", GodpotNotifications = "Godpot drop notifications",
                 GodpotAutoLock = "Godpot auto-lock", OnlyGodpots = "Godpots only", HideGodpotPct = "Hide roll % on badges", ProtectLegendary = "Auto-protect Legendary+", WishlistAutoLock = "Wishlist auto-lock", AutoCleanupPrompt = "Capacity cleanup prompt",
                 AutoExportSession = "Auto-export summary on script stop", HideBadges = "Hide all item badges", HideStatusBadge = "Hide roll/status badges", HideNewBadge = "Hide NEW badges",
-                HideUpgradeBadge = "Hide upgrade/potential badges", HideProtectionBadge = "Hide protection badges", CompactTooltip = "Compact tooltips",
+                HideUpgradeBadge = "Hide upgrade/potential badges", HideProtectionBadge = "Hide protection badges", CompactTooltip = "Compact tooltips", HideDisplayName = "Display name hider (Inventory+)",
             }
             obj.Text = tostring(labels[key] or key) .. ": " .. (Persistent.Settings[key] == true and "ON" or "OFF")
             local face = obj:FindFirstChild("DQInner")
@@ -8402,7 +8527,7 @@ scheduleInventoryRefresh = function(delaySeconds)
         QOL.inventoryRefreshRunning = false
 
         if not ok then
-            warn("[DQ Inventory QOL v19.1] batched refresh error:", err)
+            warn("[DQ Inventory QOL v19.2] batched refresh error:", err)
         end
 
         if QOL.inventoryRefreshQueued and Controller.Alive then
@@ -8650,7 +8775,7 @@ function QOL.attachInventory(gui)
     end
 
     print(string.format(
-        "[DQ Inventory QOL v19.1] attached | Mage %d | Warrior %d | Tank %d | Authoritative items %d | Native cards %d",
+        "[DQ Inventory QOL v19.2] attached | Mage %d | Warrior %d | Tank %d | Authoritative items %d | Native cards %d",
         counts.Mage,
         counts.Warrior,
         counts.Tank,
@@ -8679,7 +8804,7 @@ function Controller:Stop()
         ENV[CONTROLLER_KEY] = nil
     end
 
-    print("[DQ Inventory QOL v19.1] stopped")
+    print("[DQ Inventory QOL v19.2] stopped")
 end
 
 
@@ -8711,6 +8836,16 @@ addConnection(Controller.GlobalConnections, playerGui.ChildAdded:Connect(functio
             task.wait()
             attachSellShop(child)
         end)
+    end
+end))
+
+QOL.applyDisplayNameHider(true)
+addConnection(Controller.GlobalConnections, RunService.Heartbeat:Connect(function(dt)
+    QOL.DisplayNameAccumulator += dt
+    if QOL.DisplayNameAccumulator < 0.50 then return end
+    QOL.DisplayNameAccumulator = 0
+    if Persistent.Settings.HideDisplayName == true then
+        QOL.applyDisplayNameHider(false)
     end
 end))
 
@@ -8794,17 +8929,17 @@ end
 
 task.delay(1.5, QOL.tryRunPendingAutoUpgrade)
 
-print("[DQ Inventory QOL v19.1] loaded")
-print("[DQ Inventory QOL v19.1] dungeon Auto Upgrade now queues for Lobby")
-print("[DQ Inventory QOL v19.1] place = " .. getDQPlaceName())
-print("[DQ Inventory QOL v19.1] sequential potential + truthful progress + counted upgrade plans")
-print("[DQ Inventory QOL v19.1] Auto Sell Junk now clears every duplicate layer")
-print("[DQ Inventory QOL v19.1] Smart Junk now marks only one worst duplicate")
-print("[DQ Inventory QOL v19.1] Skills category + level sorting enabled")
-print("[DQ Inventory QOL v19.1] authoritative potential + stale-card safety enabled")
-print("[DQ Inventory QOL v19.1] verified sale removals + marginal-budget Auto Upgrade enabled")
-print("[DQ Inventory QOL v19.1] batched reward refresh + O(1) efficiency math enabled")
-print("[DQ Inventory QOL v19.1] persistent UI state enabled")
-print("[DQ Inventory QOL v19.1] ★ left-click favorite | ★ right-click lock")
-print("[DQ Inventory QOL v19.1] native tooltip ZIndex promotion enabled")
-print("[DQ Inventory QOL v19.1] More-panel overflow guard + native-style controls enabled")
+print("[DQ Inventory QOL v19.2] loaded")
+print("[DQ Inventory QOL v19.2] dungeon Auto Upgrade now queues for Lobby")
+print("[DQ Inventory QOL v19.2] place = " .. getDQPlaceName())
+print("[DQ Inventory QOL v19.2] sequential potential + truthful progress + counted upgrade plans")
+print("[DQ Inventory QOL v19.2] Auto Sell Junk now clears every duplicate layer")
+print("[DQ Inventory QOL v19.2] Smart Junk now marks only one worst duplicate")
+print("[DQ Inventory QOL v19.2] Skills category + level sorting enabled")
+print("[DQ Inventory QOL v19.2] authoritative potential + stale-card safety enabled")
+print("[DQ Inventory QOL v19.2] verified sale removals + marginal-budget Auto Upgrade enabled")
+print("[DQ Inventory QOL v19.2] batched reward refresh + O(1) efficiency math enabled")
+print("[DQ Inventory QOL v19.2] persistent UI state enabled")
+print("[DQ Inventory QOL v19.2] ★ left-click favorite | ★ right-click lock")
+print("[DQ Inventory QOL v19.2] native tooltip ZIndex promotion enabled")
+print("[DQ Inventory QOL v19.2] More-panel overflow guard + native-style controls enabled")
