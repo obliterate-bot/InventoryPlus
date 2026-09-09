@@ -957,7 +957,7 @@ local function findInventoryDataFromModule()
         end
     end)
 
-    task.delay(1.25, function()
+    task.delay(2.0, function()
         if not finished then
             resultEvent:Fire(false, nil)
         end
@@ -2517,17 +2517,12 @@ local function keepCopiesForName(name)
     return math.max(1, math.floor(tonumber(Persistent.Settings.KeepCopies) or 1))
 end
 
-Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInfo)
+Controller.SendDiscordWebhookBatch = function(alerts)
     if not Persistent.Settings.DiscordWebhookEnabled then return false, "disabled" end
 
     local url = tostring(Persistent.Settings.DiscordWebhookURL or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if url == "" then return false, "missing URL" end
     if not url:match("^https://[%w%.%-]+/api/webhooks/") then return false, "invalid webhook URL" end
-
-    if eventType == "NewSpell" and not Persistent.Settings.DiscordWebhookNewSpell then return false, "event disabled" end
-    if eventType == "NewBest" and not Persistent.Settings.DiscordWebhookNewBest then return false, "event disabled" end
-    if (eventType == "HighPot" or eventType == "Godpot") and not Persistent.Settings.DiscordWebhookHighPot then return false, "event disabled" end
-    if eventType == "Drop" and not Persistent.Settings.DiscordWebhookAllDrops then return false, "event disabled" end
 
     local requester = nil
     if type(request) == "function" then
@@ -2556,25 +2551,191 @@ Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInf
         end))
     end
 
+    local function eventEnabled(eventType)
+        eventType = tostring(eventType or "Drop")
+        if eventType == "NewSpell" then return Persistent.Settings.DiscordWebhookNewSpell ~= false end
+        if eventType == "NewBest" then return Persistent.Settings.DiscordWebhookNewBest ~= false end
+        if eventType == "HighPot" or eventType == "Godpot" then return Persistent.Settings.DiscordWebhookHighPot ~= false end
+        if eventType == "Drop" then return Persistent.Settings.DiscordWebhookAllDrops == true end
+        return true
+    end
+
     local rarityStyles = {
-        common = {emoji = "⚪", label = "Common", color = 9807270},
-        uncommon = {emoji = "🟢", label = "Uncommon", color = 3066993},
-        rare = {emoji = "🔵", label = "Rare", color = 3447003},
-        epic = {emoji = "🟣", label = "Epic", color = 10181046},
-        legendary = {emoji = "🟡", label = "Legendary", color = 15844367},
-        mythic = {emoji = "🔴", label = "Mythic", color = 15158332},
-        mythical = {emoji = "🔴", label = "Mythical", color = 15158332},
-        unknown = {emoji = "⚫", label = "Unknown", color = 5793266},
+        common = {emoji = "⚪", label = "Common", color = 9807270, rank = 1},
+        uncommon = {emoji = "🟢", label = "Uncommon", color = 3066993, rank = 2},
+        rare = {emoji = "🔵", label = "Rare", color = 3447003, rank = 3},
+        epic = {emoji = "🟣", label = "Epic", color = 10181046, rank = 4},
+        legendary = {emoji = "🟡", label = "Legendary", color = 15844367, rank = 5},
+        mythic = {emoji = "🔴", label = "Mythic", color = 15158332, rank = 6},
+        mythical = {emoji = "🔴", label = "Mythical", color = 15158332, rank = 6},
+        unknown = {emoji = "⚫", label = "Unknown", color = 5793266, rank = 0},
     }
 
-    local eventLabels = {
-        Godpot = "GODPOT DROP",
-        HighPot = "HIGH-POT DROP",
-        NewBest = "NEW BEST DROP",
-        NewSpell = "NEW SPELL DISCOVERED",
-        Drop = "LOOT DROP",
-        Test = "WEBHOOK TEST",
-    }
+    local imageCache = Controller.DiscordItemImageCache
+    if type(imageCache) ~= "table" then
+        imageCache = {}
+        Controller.DiscordItemImageCache = imageCache
+    end
+
+    local function extractAssetId(itemInfo)
+        if type(itemInfo) ~= "table" then return nil end
+
+        local function readCandidate(candidate)
+            local value = tostring(candidate or "")
+            if value == "" then return nil end
+
+            local id = value:match("[?&]id=(%d+)")
+                or value:match("rbxassetid://(%d+)")
+                or value:match("assetId=(%d+)")
+            if id then
+                return tonumber(id)
+            end
+
+            if value:match("^%d+$") then
+                return tonumber(value)
+            end
+
+            return nil
+        end
+
+        local id = readCandidate(itemInfo.imageId)
+        if id then return id end
+        id = readCandidate(itemInfo.ImageId)
+        if id then return id end
+        id = readCandidate(itemInfo.Image)
+        if id then return id end
+        id = readCandidate(itemInfo.Icon)
+        if id then return id end
+
+        local rawItem = itemInfo.Item
+        if type(rawItem) == "table" then
+            id = readCandidate(rawItem.imageId)
+            if id then return id end
+            id = readCandidate(rawItem.ImageId)
+            if id then return id end
+            id = readCandidate(rawItem.Image)
+            if id then return id end
+            id = readCandidate(rawItem.Icon)
+            if id then return id end
+        end
+
+        return nil
+    end
+
+    local function resolveTemplateAssetId(itemInfo)
+        if type(itemInfo) ~= "table" then return nil end
+
+        local itemName = tostring(itemInfo.Name or (itemInfo.Item and itemInfo.Item.name) or "")
+        if itemName == "" then return nil end
+
+        local itemType = string.lower(tostring(itemInfo.ItemType or ""))
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+        local candidateFolders = {}
+        if itemType == "ability" or itemType == "abilities" or itemType == "spell" then
+            candidateFolders = {"abilities"}
+        elseif itemType == "weapon" or itemType == "weapons" then
+            candidateFolders = {"weapons"}
+        elseif itemType == "helmet" or itemType == "helmets" then
+            candidateFolders = {"helmets", "armor"}
+        elseif itemType == "chest" or itemType == "chests" or itemType == "armor" then
+            candidateFolders = {"chests", "armor"}
+        else
+            candidateFolders = {"abilities", "weapons", "helmets", "chests", "armor"}
+        end
+
+        for _, folderName in ipairs(candidateFolders) do
+            local folder = ReplicatedStorage:FindFirstChild(folderName)
+            if folder then
+                local template = folder:FindFirstChild(itemName)
+                if template then
+                    local imageValue = template:FindFirstChild("imageId")
+                    if imageValue and imageValue:IsA("ValueBase") then
+                        local raw = tostring(imageValue.Value or "")
+                        local id = raw:match("[?&]id=(%d+)")
+                            or raw:match("rbxassetid://(%d+)")
+                            or raw:match("assetId=(%d+)")
+                        if id then
+                            return tonumber(id)
+                        end
+                        if raw:match("^%d+$") then
+                            return tonumber(raw)
+                        end
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local function resolveItemImage(itemInfo)
+        local assetId = extractAssetId(itemInfo)
+        if not assetId then
+            assetId = resolveTemplateAssetId(itemInfo)
+        end
+        if not assetId then return nil end
+
+        local cached = imageCache[assetId]
+        if type(cached) == "string" and cached ~= "" then
+            return cached
+        end
+
+        local thumbUrl = "https://thumbnails.roblox.com/v1/assets?assetIds="
+            .. tostring(assetId)
+            .. "&size=420x420&format=Png&isCircular=false"
+
+        local ok, response = pcall(requester, {
+            Url = thumbUrl,
+            Method = "GET",
+            Headers = {
+                ["Accept"] = "application/json",
+            },
+        })
+
+        if not ok or type(response) ~= "table" then
+            return nil
+        end
+
+        local status = tonumber(response.StatusCode or response.Status or response.status_code)
+        if status and (status < 200 or status >= 300) then
+            return nil
+        end
+
+        local body = tostring(response.Body or "")
+        local decodeOk, decoded = pcall(HttpService.JSONDecode, HttpService, body)
+        if not decodeOk or type(decoded) ~= "table" or type(decoded.data) ~= "table" then
+            return nil
+        end
+
+        local entry = decoded.data[1]
+        if type(entry) ~= "table" then return nil end
+
+        local imageUrl = tostring(entry.imageUrl or "")
+        if imageUrl == "" or tostring(entry.state or "") ~= "Completed" then
+            return nil
+        end
+
+        imageCache[assetId] = imageUrl
+        return imageUrl
+    end
+
+    local function itemImagePriority(alert, itemInfo, style)
+        local rarityRank = tonumber(style.rank) or 0
+        local score = rarityRank * 1000000000
+        local eventType = tostring(alert.EventType or "")
+
+        -- Rarity is absolute priority. These values only break ties
+        -- between drops of the exact same rarity.
+        if itemInfo.IsGodpot == true or eventType == "Godpot" then score = score + 100000000 end
+        if itemInfo.IsHighPot == true or itemInfo.IsHighPotDrop == true or eventType == "HighPot" then score = score + 50000000 end
+        if itemInfo.IsNewBest == true or itemInfo.IsNewBestDrop == true or eventType == "NewBest" then score = score + 25000000 end
+        if itemInfo.IsNewCollection == true or eventType == "NewSpell" then score = score + 10000000 end
+
+        score = score + math.floor((tonumber(itemInfo.GodpotPct) or 0) * 1000)
+        score = score + math.min(999999, math.floor((tonumber(itemInfo.Potential) or 0) / 1000))
+        return score
+    end
 
     local dungeonNames = {
         DT = "Desert Temple",
@@ -2594,150 +2755,226 @@ Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInf
         GS = "Gilded Skies",
     }
 
-    local rarityKey = "unknown"
-    if type(itemInfo) == "table" then
-        rarityKey = string.lower(tostring(itemInfo.Rarity or (itemInfo.Item and itemInfo.Item.rarity) or "unknown"))
+    local filtered = {}
+    local seenUIDs = {}
+    for _, alert in ipairs(type(alerts) == "table" and alerts or {}) do
+        if type(alert) == "table" and eventEnabled(alert.EventType) then
+            local info = type(alert.ItemInfo) == "table" and alert.ItemInfo or {}
+            local uid = tostring(info.UID or "")
+            if uid == "" or not seenUIDs[uid] then
+                if uid ~= "" then seenUIDs[uid] = true end
+                filtered[#filtered + 1] = alert
+            end
+        end
     end
-    local style = rarityStyles[rarityKey] or rarityStyles.unknown
+    if #filtered == 0 then return false, "no enabled alerts" end
 
-    local itemName = "Unknown Item"
-    local itemType = "item"
-    local className = ""
-    if type(itemInfo) == "table" then
-        itemName = tostring(itemInfo.Name or (itemInfo.Item and itemInfo.Item.name) or itemName)
-        itemType = tostring(itemInfo.ItemType or itemType)
-        className = tostring(itemInfo.Class or "")
-    end
+    table.sort(filtered, function(a, b)
+        local aInfo = type(a.ItemInfo) == "table" and a.ItemInfo or {}
+        local bInfo = type(b.ItemInfo) == "table" and b.ItemInfo or {}
 
-    local eventLabel = eventLabels[tostring(eventType)] or string.upper(tostring(titleText or "INVENTORY+ ALERT"))
-    local embedTitle = style.emoji .. "  " .. eventLabel
-    if itemName ~= "Unknown Item" then
-        embedTitle = embedTitle .. "  |  " .. itemName
-    end
+        local aKey = string.lower(tostring(aInfo.Rarity or (aInfo.Item and aInfo.Item.rarity) or "unknown"))
+        local bKey = string.lower(tostring(bInfo.Rarity or (bInfo.Item and bInfo.Item.rarity) or "unknown"))
+        local aStyle = rarityStyles[aKey] or rarityStyles.unknown
+        local bStyle = rarityStyles[bKey] or rarityStyles.unknown
+
+        if aStyle.rank ~= bStyle.rank then
+            return aStyle.rank > bStyle.rank
+        end
+
+        local aPot = tonumber(aInfo.GodpotPct) or 0
+        local bPot = tonumber(bInfo.GodpotPct) or 0
+        if aPot ~= bPot then
+            return aPot > bPot
+        end
+
+        local aPotential = tonumber(aInfo.Potential) or 0
+        local bPotential = tonumber(bInfo.Potential) or 0
+        if aPotential ~= bPotential then
+            return aPotential > bPotential
+        end
+
+        return tostring(aInfo.Name or a.Title or "") < tostring(bInfo.Name or b.Title or "")
+    end)
+
+    local highestStyle = rarityStyles.unknown
+    local rarityCounts = {}
+    local specialCounts = {
+        godpot = 0,
+        highPot = 0,
+        newBest = 0,
+        newCollection = 0,
+        newSpell = 0,
+        wishlist = 0,
+    }
 
     local fields = {}
-    local function addField(name, value, inline)
-        value = tostring(value or "")
-        if value ~= "" then
+    local maxItemFields = 12
+    local bestImageUrl = nil
+    local bestImageName = nil
+    local bestImageScore = -math.huge
+
+    for index, alert in ipairs(filtered) do
+        local itemInfo = type(alert.ItemInfo) == "table" and alert.ItemInfo or {}
+        local eventType = tostring(alert.EventType or "Drop")
+        local itemName = tostring(itemInfo.Name or (itemInfo.Item and itemInfo.Item.name) or alert.Title or "Unknown Item")
+        local itemType = tostring(itemInfo.ItemType or (eventType == "NewSpell" and "ability" or "item"))
+        local rarityKey = string.lower(tostring(itemInfo.Rarity or (itemInfo.Item and itemInfo.Item.rarity) or "unknown"))
+        local style = rarityStyles[rarityKey] or rarityStyles.unknown
+        local itemImageUrl = resolveItemImage(itemInfo)
+
+        if itemImageUrl then
+            local imageScore = itemImagePriority(alert, itemInfo, style)
+            if imageScore > bestImageScore then
+                bestImageScore = imageScore
+                bestImageUrl = itemImageUrl
+                bestImageName = itemName
+            end
+        end
+
+        rarityCounts[style.label] = (rarityCounts[style.label] or 0) + 1
+        if style.rank > highestStyle.rank then highestStyle = style end
+
+        if itemInfo.IsGodpot == true or eventType == "Godpot" then specialCounts.godpot += 1 end
+        if itemInfo.IsHighPot == true or itemInfo.IsHighPotDrop == true or eventType == "HighPot" then specialCounts.highPot += 1 end
+        if itemInfo.IsNewBest == true or itemInfo.IsNewBestDrop == true or eventType == "NewBest" then specialCounts.newBest += 1 end
+        if itemInfo.IsNewCollection == true then specialCounts.newCollection += 1 end
+        if eventType == "NewSpell" then specialCounts.newSpell += 1 end
+        if itemInfo.IsWishlist == true then specialCounts.wishlist += 1 end
+
+        if index <= maxItemFields then
+            local lines = {}
+
+            local meta = {style.label, titleCase(itemType)}
+            local className = tostring(itemInfo.Class or "")
+            if className ~= "" and string.lower(className) ~= "none" then
+                meta[#meta + 1] = titleCase(className)
+            end
+            local level = tonumber(itemInfo.Level)
+            if level and level > 0 then
+                meta[#meta + 1] = "Lv " .. tostring(level)
+            end
+            lines[#lines + 1] = table.concat(meta, " • ")
+
+            local potential = tonumber(itemInfo.Potential)
+            local current = tonumber(itemInfo.Current)
+            local potPct = tonumber(itemInfo.GodpotPct)
+            local statBits = {}
+
+            if potPct then
+                local grade = tostring(itemInfo.RollGrade or "")
+                statBits[#statBits + 1] = "**POT** `" .. string.format("%.1f%%", potPct) .. "`"
+                if grade ~= "" then statBits[#statBits + 1] = "`" .. grade .. "`" end
+            elseif tostring(itemInfo.RollGrade or "") ~= "" then
+                statBits[#statBits + 1] = "**Roll** `" .. tostring(itemInfo.RollGrade) .. "`"
+            end
+
+            if potential and potential > 0 then
+                statBits[#statBits + 1] = "**Max** `" .. formatCompact(potential) .. "`"
+            end
+            if current and current > 0 and not potential then
+                statBits[#statBits + 1] = "**Stat** `" .. formatCompact(current) .. "`"
+            end
+            if #statBits > 0 then
+                lines[#lines + 1] = table.concat(statBits, " • ")
+            end
+
+            local compactBits = {}
+            local curUp = tonumber(itemInfo.CurrentUpgrade)
+            local maxUp = tonumber(itemInfo.MaxUpgrades)
+            if maxUp and maxUp > 0 then
+                compactBits[#compactBits + 1] = "**Upg** `" .. tostring(math.floor(curUp or 0)) .. "/" .. tostring(math.floor(maxUp)) .. "`"
+            end
+
+            local healthPct = tonumber(itemInfo.GodpotHealthPct)
+            if healthPct then
+                compactBits[#compactBits + 1] = "**HP** `" .. string.format("%.1f%%", healthPct) .. "`"
+            end
+
+            local dungeonCode = tostring(itemInfo.GodpotDungeon or "")
+            if dungeonCode ~= "" then
+                compactBits[#compactBits + 1] = "`" .. dungeonCode .. "`"
+            end
+
+            if itemImageUrl then
+                compactBits[#compactBits + 1] = "[Icon](" .. itemImageUrl .. ")"
+            end
+
+            if #compactBits > 0 then
+                lines[#lines + 1] = table.concat(compactBits, " • ")
+            end
+
+            local status = {}
+            if eventType == "NewSpell" then status[#status + 1] = "New Spell" end
+            if itemInfo.IsGodpot == true or eventType == "Godpot" then status[#status + 1] = "GODPOT" end
+            if itemInfo.IsHighPot == true or itemInfo.IsHighPotDrop == true or eventType == "HighPot" then status[#status + 1] = "High POT" end
+            if itemInfo.IsNewBest == true or itemInfo.IsNewBestDrop == true or eventType == "NewBest" then status[#status + 1] = "New Best" end
+            if itemInfo.IsNewCollection == true or eventType == "NewSpell" then status[#status + 1] = "First Time" end
+            if itemInfo.IsWishlist == true then status[#status + 1] = "Wishlist" end
+
+            local previousBest = tonumber(itemInfo.PreviousBestPotential)
+            if previousBest and previousBest > 0 and potential and potential > previousBest then
+                status[#status + 1] = "+" .. formatCompact(potential - previousBest)
+            end
+
+            if #status > 0 then
+                lines[#lines + 1] = "**" .. table.concat(status, " • ") .. "**"
+            end
+
             fields[#fields + 1] = {
-                name = clip(name, 256),
-                value = clip(value, 1024),
-                inline = inline == true,
+                name = clip(style.emoji .. " " .. itemName, 256),
+                value = clip(table.concat(lines, "\n"), 1024),
+                inline = true,
             }
         end
     end
 
-    addField("Rarity", style.emoji .. " **" .. style.label .. "**", true)
-    addField("Item Type", titleCase(itemType), true)
-
-    if className ~= "" and string.lower(className) ~= "none" then
-        addField("Class", titleCase(className), true)
-    end
-
-    if type(itemInfo) == "table" then
-        local level = tonumber(itemInfo.Level)
-        if level and level > 0 then
-            addField("Required Level", tostring(level), true)
-        end
-
-        local potential = tonumber(itemInfo.Potential)
-        local current = tonumber(itemInfo.Current)
-        if potential and potential > 0 then
-            addField("Max Potential", "`" .. formatCompact(potential) .. "`", true)
-        end
-        if current and current > 0 then
-            addField("Current Stat", "`" .. formatCompact(current) .. "`", true)
-        end
-
-        local potPct = tonumber(itemInfo.GodpotPct)
-        if potPct then
-            local grade = tostring(itemInfo.RollGrade or "")
-            local quality = string.format("`%.1f%%`", potPct)
-            if grade ~= "" then quality = quality .. "  |  **" .. grade .. " Roll**" end
-            addField("POT Quality", quality, true)
-        elseif tostring(itemInfo.RollGrade or "") ~= "" then
-            addField("Roll Grade", "**" .. tostring(itemInfo.RollGrade) .. "**", true)
-        end
-
-        local potMin = tonumber(itemInfo.GodpotMin)
-        local potMax = tonumber(itemInfo.GodpotMax)
-        if potMin and potMax and potMax > 0 then
-            addField("POT Range", "`" .. formatCompact(potMin) .. " - " .. formatCompact(potMax) .. "`", true)
-        end
-
-        local healthPct = tonumber(itemInfo.GodpotHealthPct)
-        if healthPct then
-            addField("Health Roll", string.format("`%.1f%%`", healthPct), true)
-        end
-
-        local curUp = tonumber(itemInfo.CurrentUpgrade)
-        local maxUp = tonumber(itemInfo.MaxUpgrades)
-        if maxUp and maxUp > 0 then
-            local upPct = tonumber(itemInfo.UpgradePct) or ((curUp or 0) / maxUp * 100)
-            addField(
-                "Upgrades",
-                "`" .. tostring(math.floor(curUp or 0)) .. " / " .. tostring(math.floor(maxUp)) .. "`"
-                    .. string.format("  |  %.1f%%", upPct),
-                true
-            )
-        end
-
-        local previousBest = tonumber(itemInfo.PreviousBestPotential)
-        if previousBest and previousBest > 0 and potential and potential > previousBest then
-            local delta = potential - previousBest
-            local deltaPct = previousBest > 0 and (delta / previousBest) * 100 or 0
-            addField(
-                "Previous Best",
-                "`" .. formatCompact(previousBest) .. "`  ->  `" .. formatCompact(potential) .. "`"
-                    .. "\n**+" .. formatCompact(delta) .. "**  |  **+" .. string.format("%.2f%%", deltaPct) .. "**",
-                false
-            )
-        end
-
-        local collectionKey = tostring(itemType) .. "|" .. lower(itemName)
-        local collection = Persistent.Collection and Persistent.Collection[collectionKey] or nil
-        local collectionParts = {}
-        if itemInfo.IsNewCollection == true or eventType == "NewSpell" then
-            collectionParts[#collectionParts + 1] = "**First time obtained**"
-        end
-        if type(collection) == "table" then
-            local times = tonumber(collection.TimesObtained) or 0
-            if times > 0 then collectionParts[#collectionParts + 1] = "Owned count: `" .. tostring(times) .. "`" end
-            local bestRoll = tonumber(collection.BestGodpotPct) or 0
-            if bestRoll > 0 then collectionParts[#collectionParts + 1] = "Best recorded POT: `" .. string.format("%.1f%%", bestRoll) .. "`" end
-        end
-        if #collectionParts > 0 then
-            addField("Collection", table.concat(collectionParts, "\n"), false)
-        end
-
-        local flags = {}
-        if itemInfo.IsGodpot == true then flags[#flags + 1] = "**GODPOT**" end
-        if itemInfo.IsHighPot == true or itemInfo.IsHighPotDrop == true then flags[#flags + 1] = "**High POT**" end
-        if itemInfo.IsNewBest == true or itemInfo.IsNewBestDrop == true then flags[#flags + 1] = "**New All-Time Best**" end
-        if itemInfo.IsNewCollection == true then flags[#flags + 1] = "**New Collection Item**" end
-        if itemInfo.IsWishlist == true then flags[#flags + 1] = "**Wishlist**" end
-        if tostring(itemInfo.RollGrade or "") == "S" then flags[#flags + 1] = "**S Roll**" end
-        if #flags > 0 then
-            addField("Highlights", table.concat(flags, "  •  "), false)
-        end
-
-        local dungeonCode = tostring(itemInfo.GodpotDungeon or "")
-        if dungeonCode ~= "" then
-            addField("Dungeon Data", (dungeonNames[dungeonCode] or dungeonCode) .. "  (`" .. dungeonCode .. "`)", true)
-        end
-
-        local sellValue = tonumber(itemInfo.SellValue)
-        if sellValue and sellValue > 0 then
-            addField("Sell Value", "`" .. formatCompact(sellValue) .. "` gold", true)
+    local rarityOrder = {"Mythic", "Mythical", "Legendary", "Epic", "Rare", "Uncommon", "Common", "Unknown"}
+    local raritySummary = {}
+    for _, label in ipairs(rarityOrder) do
+        local count = tonumber(rarityCounts[label]) or 0
+        if count > 0 then
+            local style = rarityStyles[string.lower(label)] or rarityStyles.unknown
+            raritySummary[#raritySummary + 1] = style.emoji .. " " .. tostring(count)
         end
     end
 
-    local body = tostring(bodyText or "")
-    local description = ""
-    if body ~= "" then
-        description = "**Alert Details**\n" .. clip(body, 3500)
-    elseif itemName ~= "Unknown Item" then
-        description = "**" .. itemName .. "** was detected by Inventory+."
+    local highlightSummary = {}
+    if specialCounts.godpot > 0 then highlightSummary[#highlightSummary + 1] = "GODPOT " .. tostring(specialCounts.godpot) end
+    if specialCounts.highPot > 0 then highlightSummary[#highlightSummary + 1] = "High POT " .. tostring(specialCounts.highPot) end
+    if specialCounts.newBest > 0 then highlightSummary[#highlightSummary + 1] = "New Best " .. tostring(specialCounts.newBest) end
+    if specialCounts.newSpell > 0 then highlightSummary[#highlightSummary + 1] = "New Spell " .. tostring(specialCounts.newSpell) end
+    if specialCounts.newCollection > 0 then highlightSummary[#highlightSummary + 1] = "First Time " .. tostring(specialCounts.newCollection) end
+    if specialCounts.wishlist > 0 then highlightSummary[#highlightSummary + 1] = "Wishlist " .. tostring(specialCounts.wishlist) end
+
+    local summaryFields = {
+        {
+            name = "Drops",
+            value = "`" .. tostring(#filtered) .. "` item" .. (#filtered == 1 and "" or "s"),
+            inline = true,
+        },
+        {
+            name = "Rarities",
+            value = #raritySummary > 0 and table.concat(raritySummary, "  ") or "None",
+            inline = true,
+        },
+        {
+            name = "Highlights",
+            value = #highlightSummary > 0 and table.concat(highlightSummary, " • ") or "None",
+            inline = true,
+        },
+    }
+
+    for i = #summaryFields, 1, -1 do
+        table.insert(fields, 1, summaryFields[i])
+    end
+
+    if #filtered > maxItemFields then
+        fields[#fields + 1] = {
+            name = "Additional Drops",
+            value = "`+" .. tostring(#filtered - maxItemFields) .. "` more items not expanded",
+            inline = true,
+        }
     end
 
     local playerLabel = "Inventory+"
@@ -2745,20 +2982,22 @@ Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInf
         playerLabel = tostring(LocalPlayer and (LocalPlayer.DisplayName or LocalPlayer.Name) or "Player")
     end
 
-    local footerParts = {
-        "Inventory+",
-        "Dungeon Quest Loot Tracker",
-        "Player: " .. playerLabel,
-    }
+    local titleText = #filtered == 1 and "Inventory+ Loot Alert" or ("Inventory+ Loot Summary  |  " .. tostring(#filtered) .. " Items")
+    local description = bestImageName
+        and ("Rarest drop: **" .. bestImageName .. "**")
+        or "Dungeon Quest loot summary."
 
     local embed = {
         author = {name = "Inventory+  |  Dungeon Quest"},
-        title = clip(embedTitle, 256),
-        description = description ~= "" and clip(description, 4096) or nil,
-        color = style.color,
+        title = titleText,
+        description = description,
+        color = highestStyle.color,
+        thumbnail = bestImageUrl and {url = bestImageUrl} or nil,
         fields = fields,
-        footer = {text = clip(table.concat(footerParts, "  |  "), 2048)},
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ", tonumber(type(itemInfo) == "table" and itemInfo.AcquiredAt) or os.time()),
+        footer = {
+            text = clip("Inventory+  |  Dungeon Quest Loot Tracker  |  Player: " .. playerLabel, 2048),
+        },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time()),
     }
 
     local payload = HttpService:JSONEncode({
@@ -2782,6 +3021,45 @@ Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInf
         return false, "HTTP " .. tostring(status)
     end
     return true, status and ("HTTP " .. tostring(status)) or "sent"
+end
+
+Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInfo)
+    return Controller.SendDiscordWebhookBatch({
+        {
+            EventType = eventType,
+            Title = titleText,
+            Body = bodyText,
+            ItemInfo = itemInfo,
+        },
+    })
+end
+
+Controller.QueueDiscordWebhook = function(eventType, titleText, bodyText, itemInfo)
+    if not Persistent.Settings.DiscordWebhookEnabled then return end
+
+    Controller.DiscordPendingAlerts = type(Controller.DiscordPendingAlerts) == "table" and Controller.DiscordPendingAlerts or {}
+    Controller.DiscordPendingAlerts[#Controller.DiscordPendingAlerts + 1] = {
+        EventType = eventType,
+        Title = titleText,
+        Body = bodyText,
+        ItemInfo = itemInfo,
+        QueuedAt = os.clock(),
+    }
+
+    Controller.DiscordBatchSerial = (tonumber(Controller.DiscordBatchSerial) or 0) + 1
+    local serial = Controller.DiscordBatchSerial
+
+    task.delay(1.25, function()
+        if serial ~= Controller.DiscordBatchSerial then return end
+
+        local pending = Controller.DiscordPendingAlerts
+        Controller.DiscordPendingAlerts = {}
+        if type(pending) ~= "table" or #pending == 0 then return end
+
+        task.spawn(function()
+            Controller.SendDiscordWebhookBatch(pending)
+        end)
+    end)
 end
 
 Controller.UpdateCollection = function(info, acquired)
@@ -2856,9 +3134,7 @@ local function qolNotify(titleText, bodyText, webhookEvent, webhookInfo)
     end
 
     if webhookEvent then
-        task.spawn(function()
-            Controller.SendDiscordWebhook(webhookEvent, titleText, bodyText, webhookInfo)
-        end)
+        Controller.QueueDiscordWebhook(webhookEvent, titleText, bodyText, webhookInfo)
     end
 end
 
@@ -2981,6 +3257,7 @@ local function rebuildMetrics()
         info.ItemType = itemType
         info.ItemNumber = itemNumber
         info.Item = item
+        info.ImageId = type(item) == "table" and (item.imageId or item.ImageId or item.Image or item.Icon) or nil
         info.UID = uid
 
         local className = classifyItem(item)
@@ -3341,6 +3618,7 @@ local function rebuildMetrics()
                     ItemType = info.ItemType,
                     Class = info.Class,
                     Rarity = info.Rarity,
+                    ImageId = info.ImageId or (type(info.Item) == "table" and info.Item.imageId or nil),
                     RollGrade = info.RollGrade,
                     Current = info.Current,
                     Potential = info.Potential,
@@ -7799,37 +8077,72 @@ function QOL.collectionText()
 end
 
 function QOL.testDiscordWebhook()
-    local ok, detail = Controller.SendDiscordWebhook(
-        "Test",
-        "Inventory+ webhook test",
-        "Premium embed styling is working. This sample shows rarity color, POT quality, upgrades, collection status, and best-item comparison.",
+    local sampleAlerts = {
         {
-            Name = "Webhook Test Item",
-            ItemType = "weapon",
-            Class = "test",
-            Rarity = "epic",
-            Level = 190,
-            Current = 118500,
-            Potential = 123456,
-            CurrentUpgrade = 41000,
-            MaxUpgrades = 42500,
-            UpgradePct = 96.5,
-            GodpotPct = 97.5,
-            GodpotMin = 111000,
-            GodpotMax = 125000,
-            GodpotHealthPct = 96.8,
-            GodpotDungeon = "AT",
-            PreviousBestPotential = 119000,
-            IsNewBestDrop = true,
-            IsHighPotDrop = true,
-            IsNewCollection = true,
-            IsWishlist = true,
-            SellValue = 500000,
-            RollGrade = "S",
-        }
-    )
+            EventType = "Test",
+            Title = "Test Epic Armor",
+            Body = "Sample high-POT armor drop.",
+            ItemInfo = {
+                Name = "Riptide Warrior Helmet",
+                ImageId = "http://www.roblox.com/asset/?id=6187498386",
+                ItemType = "helmet",
+                Class = "warrior",
+                Rarity = "epic",
+                Level = 160,
+                Current = 1150000,
+                Potential = 1538456,
+                CurrentUpgrade = 47107,
+                MaxUpgrades = 47107,
+                UpgradePct = 100,
+                GodpotPct = 97.5,
+                GodpotMin = 1425000,
+                GodpotMax = 1575000,
+                GodpotDungeon = "AT",
+                PreviousBestPotential = 1490000,
+                IsNewBestDrop = true,
+                IsHighPotDrop = true,
+                IsNewCollection = false,
+                RollGrade = "S",
+            },
+        },
+        {
+            EventType = "Test",
+            Title = "Test Rare Guardian",
+            Body = "Sample guardian drop.",
+            ItemInfo = {
+                Name = "Riptide Guardian Helmet",
+                ImageId = "http://www.roblox.com/asset/?id=6187497907",
+                ItemType = "helmet",
+                Class = "guardian",
+                Rarity = "rare",
+                Potential = 31793237,
+                GodpotPct = 88.4,
+                GodpotMin = 30433250,
+                GodpotMax = 33636750,
+                GodpotDungeon = "AT",
+                IsNewCollection = true,
+                RollGrade = "A",
+            },
+        },
+        {
+            EventType = "Test",
+            Title = "Test New Spell",
+            Body = "Sample first-time spell.",
+            ItemInfo = {
+                Name = "Enhanced Inner Focus",
+                ItemType = "ability",
+                Class = "spell",
+                Rarity = "legendary",
+                Level = 150,
+                IsNewCollection = true,
+                ImageId = "http://www.roblox.com/asset/?id=5251638369",
+            },
+        },
+    }
+
+    local ok, detail = Controller.SendDiscordWebhookBatch(sampleAlerts)
     if ok then
-        nativeAlert("Discord webhook test sent.")
+        nativeAlert("Discord batch webhook test sent.")
     else
         nativeAlert("Discord webhook test failed: " .. tostring(detail or "unknown error"))
     end
@@ -8383,7 +8696,7 @@ function QOL.buildMorePopup(rightSide)
     numeric(loot, 12, "Capacity", "Inventory capacity fallback", "InventoryCapacity", 1, 2000)
     numeric(loot, 13, "CapacityWarn", "Capacity warning %", "InventoryWarningPct", 1, 100)
     numeric(loot, 14, "LootMilestone", "Loot milestone (0 = off)", "LootMilestone", 0, 10000)
-    QOL.makePanelLabel(loot, "WebhookHelp", "DISCORD WEBHOOK - premium loot embeds use rarity-colored sidebars + color emojis and include POT, upgrades, collection status, best-item comparison, dungeon data, and highlights. URL stays local and is excluded from settings export.", 48, 15)
+    QOL.makePanelLabel(loot, "WebhookHelp", "DISCORD WEBHOOK - alerts are debounced and grouped into one premium embed per loot batch. Inventory+ resolves each Dungeon Quest item imageId through Roblox thumbnails. The most important drop is shown as both the embed thumbnail and large embed image, and every listed drop includes its own View Item Image link. One run still sends one Discord message and one embed. URL stays local and is excluded from settings export.", 48, 15)
     toggle(loot, 16, "DiscordWebhookEnabled", "Discord webhook")
     textSetting(loot, 17, "Webhook URL", "DiscordWebhookURL")
     toggle(loot, 18, "DiscordWebhookNewSpell", "Webhook: new spells")
@@ -9510,4 +9823,4 @@ print("[DQ Inventory QOL v20] ★ left-click favorite | ★ right-click lock")
 print("[DQ Inventory QOL v20] native tooltip ZIndex promotion enabled")
 print("[DQ Inventory QOL v20] More-panel overflow guard + native-style controls enabled")
 print("[DQ Inventory QOL v20] persistent collection + all-time best POT tracking enabled")
-print("[DQ Inventory QOL v20.2] premium rarity Discord embeds enabled")
+print("[DQ Inventory QOL v20.8] compact horizontal Discord layout enabled")
