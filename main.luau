@@ -1622,7 +1622,8 @@ local GODPOT_DATABASE = {
     ["sea king's trident"] = {{161500, 178500, 14250000, 15750000, 15865000, 17535000, "AT", 0, 0}},
     ["sea serpent wings"] = {{10450, 11550, 228000, 252000, 332500, 367500, "GH", 0, 0}},
     ["sea staff"] = {{114000, 126000, 5747500, 6352500, 6887500, 7612500, "AT", 0, 0}, {116850, 129150, 5975500, 6604500, 7144000, 7896000, "AT", 0, 0}, {120650, 133350, 6194000, 6846000, 7400500, 8179500, "AT", 0, 0}, {123500, 136500, 6412500, 7087500, 7647500, 8452500, "AT", 0, 0}},
-    ["seafarer's lost blade"] = {{5890, 6510, 153900, 170100, 212800, 235200, "GH", 0, 0}, {6460, 7140, 162450, 179550, 227050, 250950, "GH", 0, 0}, {7030, 7770, 171000, 189000, 241300, 266700, "GH", 0, 0}, {7600, 8400, 179550, 198450, 255550, 282450, "GH", 0, 0}},
+    ["(glitched) seafarer's lost blade"] = {{5890, 6510, 15390, 17010, 74290, 82110, "GH", 0, 0}, {6460, 7140, 16245, 17955, 80845, 89355, "GH", 0, 0}, {7030, 7770, 17100, 18900, 87400, 96600, "GH", 0, 0}, {7600, 8400, 17955, 19845, 93955, 103845, "GH", 0, 0}},
+["seafarer's lost blade"] = {{5890, 6510, 153900, 170100, 212800, 235200, "GH", 0, 0}, {6460, 7140, 162450, 179550, 227050, 250950, "GH", 0, 0}, {7030, 7770, 171000, 189000, 241300, 266700, "GH", 0, 0}, {7600, 8400, 179550, 198450, 255550, 282450, "GH", 0, 0}},
     ["seafarer's magic device"] = {{7695, 8505, 180500, 199500, 257450, 284550, "GH", 0, 0}, {8265, 9135, 189050, 208950, 271700, 300300, "GH", 0, 0}, {8835, 9765, 197600, 218400, 285950, 316050, "GH", 0, 0}, {9405, 10395, 206150, 227850, 300200, 331800, "GH", 0, 0}},
     ["serpent pike"] = {{134900, 149100, 8816000, 9744000, 10165000, 11235000, "AT", 0, 0}, {136800, 151200, 9196000, 10164000, 10564000, 11676000, "AT", 0, 0}, {138700, 153300, 9576000, 10584000, 10963000, 12117000, "AT", 0, 0}, {140600, 155400, 9975000, 11025000, 11381000, 12579000, "AT", 0, 0}},
     ["serpent scimitars"] = {{114000, 126000, 5747500, 6352500, 6887500, 7612500, "AT", 0, 0}, {116850, 129150, 5975500, 6604500, 7144000, 7896000, "AT", 0, 0}, {120650, 133350, 6194000, 6846000, 7400500, 8179500, "AT", 0, 0}, {123500, 136500, 6412500, 7087500, 7647500, 8452500, "AT", 0, 0}},
@@ -1699,12 +1700,118 @@ local DUNGEON_FULL_NAMES = {
     AT = "Aquamaris Temple",
 }
 
-local function getGodpotRollInfo(name, potential, currentStat, maxUpgrades, currentUpgrade)
+local ARMOR_SUFFIXES = {
+    " guardian helmet", " guardian hat", " guardian hood", " guardian mask", " guardian crown", " guardian helm",
+    " guardian armor", " guardian chestplate", " guardian chest", " guardian plate", " guardian robe",
+    " mage helmet", " mage hat", " mage hood", " mage cap", " mage robe", " mage tunic", " mage armor",
+    " warrior helmet", " warrior helm", " warrior armor", " warrior chestplate", " warrior plate",
+    " helmet", " hat", " hood", " cap", " mask", " crown", " helm",
+    " armor", " chestplate", " chest", " robe", " robes", " tunic", " plate", " set"
+}
+
+local SPECIAL_ARMOR_MAPPINGS = {
+    ["novice"] = "novice | blue wizard",
+    ["blue wizard"] = "novice | blue wizard",
+    ["mercenary"] = "mercenary/elemental",
+    ["elemental"] = "mercenary/elemental",
+    ["elementalist"] = "mercenary/elemental",
+    ["red knight"] = "red knight/templar",
+    ["templar"] = "red knight/templar",
+    ["crusader"] = "crusader's",
+    ["iron"] = "iron armor",
+    ["warlord plate"] = "plate",
+    ["mage plate"] = "plate",
+    ["elite warlord plate"] = "elite (warlord/mage) plate",
+    ["elite mage plate"] = "elite (warlord/mage) plate",
+    ["angelic plate"] = "angelic/infernal",
+    ["inferno plate"] = "angelic/infernal",
+    ["beastly"] = "beastly / arch-mage",
+    ["arch-mage"] = "beastly / arch-mage",
+    ["arch mage"] = "beastly / arch-mage",
+    ["rogue"] = "rouge",
+    ["rogue guardian"] = "rouge guardian",
+    ["commander"] = "commanders",
+    ["commander guardian"] = "commanders guardian",
+    ["commander's"] = "commanders",
+    ["commander's guardian"] = "commanders guardian",
+    ["crystalline guardian"] = "crystalline guadian",
+}
+
+local function resolveItemDbName(rawName, itemType)
+    if not rawName then return nil end
+    local raw = string.lower(string.gsub(string.gsub(tostring(rawName), "^%s+", ""), "%s+$", ""))
+    if GODPOT_DATABASE[raw] then
+        return raw
+    end
+
+    if string.find(raw, "overlord", 1, true) and string.find(raw, "guardian", 1, true) then
+        if string.find(raw, "hat", 1, true) or string.find(raw, "helmet", 1, true) or string.find(raw, "hood", 1, true) or itemType == "helmet" then
+            if GODPOT_DATABASE["overlord's guardian (hat)"] then
+                return "overlord's guardian (hat)"
+            end
+        end
+        if string.find(raw, "chest", 1, true) or string.find(raw, "armor", 1, true) or string.find(raw, "plate", 1, true) or itemType == "chest" or itemType == "armor" then
+            if GODPOT_DATABASE["overlord's guardian (chest)"] then
+                return "overlord's guardian (chest)"
+            end
+        end
+    end
+
+    local isGuardian = string.find(raw, "guardian", 1, true) ~= nil
+
+    for _, suffix in ipairs(ARMOR_SUFFIXES) do
+        if string.sub(raw, -#suffix) == suffix then
+            local cand = string.sub(raw, 1, -#suffix - 1)
+            cand = string.gsub(string.gsub(cand, "^%s+", ""), "%s+$", "")
+            
+            if isGuardian then
+                local gcand = (string.sub(cand, -8) == "guardian") and cand or (cand .. " guardian")
+                if GODPOT_DATABASE[gcand] then
+                    return gcand
+                end
+                if SPECIAL_ARMOR_MAPPINGS[gcand] and GODPOT_DATABASE[SPECIAL_ARMOR_MAPPINGS[gcand]] then
+                    return SPECIAL_ARMOR_MAPPINGS[gcand]
+                end
+            end
+            
+            if GODPOT_DATABASE[cand] then
+                return cand
+            end
+            if SPECIAL_ARMOR_MAPPINGS[cand] and GODPOT_DATABASE[SPECIAL_ARMOR_MAPPINGS[cand]] then
+                return SPECIAL_ARMOR_MAPPINGS[cand]
+            end
+            
+            if isGuardian then
+                local baseMapped = SPECIAL_ARMOR_MAPPINGS[cand] or cand
+                local mg = baseMapped .. " guardian"
+                if GODPOT_DATABASE[mg] then
+                    return mg
+                end
+                if SPECIAL_ARMOR_MAPPINGS[mg] and GODPOT_DATABASE[SPECIAL_ARMOR_MAPPINGS[mg]] then
+                    return SPECIAL_ARMOR_MAPPINGS[mg]
+                end
+            end
+        end
+    end
+
+    for k in pairs(GODPOT_DATABASE) do
+        if #k >= 5 and string.find(raw, k, 1, true) then
+            return k
+        end
+    end
+
+    return nil
+end
+
+local function getGodpotRollInfo(name, potential, currentStat, maxUpgrades, currentUpgrade, itemType)
     if not name or not potential or potential <= 0 then
         return nil
     end
-    local nameLower = string.lower(tostring(name))
-    local tiers = GODPOT_DATABASE[nameLower]
+    local resolvedKey = resolveItemDbName(name, itemType)
+    if not resolvedKey then
+        return nil
+    end
+    local tiers = GODPOT_DATABASE[resolvedKey]
     if not tiers or #tiers == 0 then
         return nil
     end
@@ -2454,7 +2561,7 @@ local function rebuildMetrics()
         info.DuplicateIndex = 1
         info.BestDuplicate = false
 
-        local gp = getGodpotRollInfo(info.Name, info.Potential, info.Current, info.MaxUpgrades, info.CurrentUpgrade)
+        local gp = getGodpotRollInfo(info.Name, info.Potential, info.Current, info.MaxUpgrades, info.CurrentUpgrade, info.ItemType)
         if gp then
             info.GodpotInfo = gp
             info.RollGrade = gp.RollGrade
