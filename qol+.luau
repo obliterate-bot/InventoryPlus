@@ -2517,7 +2517,7 @@ local function keepCopiesForName(name)
     return math.max(1, math.floor(tonumber(Persistent.Settings.KeepCopies) or 1))
 end
 
-Controller.SendDiscordWebhook = function(eventType, titleText, bodyText)
+Controller.SendDiscordWebhook = function(eventType, titleText, bodyText, itemInfo)
     if not Persistent.Settings.DiscordWebhookEnabled then return false, "disabled" end
 
     local url = tostring(Persistent.Settings.DiscordWebhookURL or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -2539,11 +2539,232 @@ Controller.SendDiscordWebhook = function(eventType, titleText, bodyText)
     end
     if not requester then return false, "HTTP request API unavailable" end
 
-    local title = tostring(titleText or "Inventory+"):gsub("•", "-"):gsub("→", "->"):gsub("▲", "")
-    local body = tostring(bodyText or ""):gsub("•", "-"):gsub("→", "->"):gsub("▲", "")
+    local function clip(value, maxLen)
+        local s = tostring(value or "")
+        maxLen = tonumber(maxLen) or 1024
+        if #s > maxLen then
+            return s:sub(1, math.max(1, maxLen - 3)) .. "..."
+        end
+        return s
+    end
+
+    local function titleCase(value)
+        local s = tostring(value or "")
+        if s == "" then return "Unknown" end
+        return (s:gsub("(%a)([%w_']*)", function(a, b)
+            return string.upper(a) .. string.lower(b)
+        end))
+    end
+
+    local rarityStyles = {
+        common = {emoji = "⚪", label = "Common", color = 9807270},
+        uncommon = {emoji = "🟢", label = "Uncommon", color = 3066993},
+        rare = {emoji = "🔵", label = "Rare", color = 3447003},
+        epic = {emoji = "🟣", label = "Epic", color = 10181046},
+        legendary = {emoji = "🟡", label = "Legendary", color = 15844367},
+        mythic = {emoji = "🔴", label = "Mythic", color = 15158332},
+        mythical = {emoji = "🔴", label = "Mythical", color = 15158332},
+        unknown = {emoji = "⚫", label = "Unknown", color = 5793266},
+    }
+
+    local eventLabels = {
+        Godpot = "GODPOT DROP",
+        HighPot = "HIGH-POT DROP",
+        NewBest = "NEW BEST DROP",
+        NewSpell = "NEW SPELL DISCOVERED",
+        Drop = "LOOT DROP",
+        Test = "WEBHOOK TEST",
+    }
+
+    local dungeonNames = {
+        DT = "Desert Temple",
+        WO = "Winter Outpost",
+        PI = "Pirate Island",
+        KC = "King's Castle",
+        UW = "The Underworld",
+        SP = "Samurai Palace",
+        TC = "The Canals",
+        GH = "Ghastly Harbor",
+        SS = "Steampunk Sewers",
+        OO = "Orbital Outpost",
+        VC = "Volcanic Chambers",
+        AT = "Aquatic Temple",
+        EF = "Enchanted Forest",
+        NL = "Northern Lands",
+        GS = "Gilded Skies",
+    }
+
+    local rarityKey = "unknown"
+    if type(itemInfo) == "table" then
+        rarityKey = string.lower(tostring(itemInfo.Rarity or (itemInfo.Item and itemInfo.Item.rarity) or "unknown"))
+    end
+    local style = rarityStyles[rarityKey] or rarityStyles.unknown
+
+    local itemName = "Unknown Item"
+    local itemType = "item"
+    local className = ""
+    if type(itemInfo) == "table" then
+        itemName = tostring(itemInfo.Name or (itemInfo.Item and itemInfo.Item.name) or itemName)
+        itemType = tostring(itemInfo.ItemType or itemType)
+        className = tostring(itemInfo.Class or "")
+    end
+
+    local eventLabel = eventLabels[tostring(eventType)] or string.upper(tostring(titleText or "INVENTORY+ ALERT"))
+    local embedTitle = style.emoji .. "  " .. eventLabel
+    if itemName ~= "Unknown Item" then
+        embedTitle = embedTitle .. "  |  " .. itemName
+    end
+
+    local fields = {}
+    local function addField(name, value, inline)
+        value = tostring(value or "")
+        if value ~= "" then
+            fields[#fields + 1] = {
+                name = clip(name, 256),
+                value = clip(value, 1024),
+                inline = inline == true,
+            }
+        end
+    end
+
+    addField("Rarity", style.emoji .. " **" .. style.label .. "**", true)
+    addField("Item Type", titleCase(itemType), true)
+
+    if className ~= "" and string.lower(className) ~= "none" then
+        addField("Class", titleCase(className), true)
+    end
+
+    if type(itemInfo) == "table" then
+        local level = tonumber(itemInfo.Level)
+        if level and level > 0 then
+            addField("Required Level", tostring(level), true)
+        end
+
+        local potential = tonumber(itemInfo.Potential)
+        local current = tonumber(itemInfo.Current)
+        if potential and potential > 0 then
+            addField("Max Potential", "`" .. formatCompact(potential) .. "`", true)
+        end
+        if current and current > 0 then
+            addField("Current Stat", "`" .. formatCompact(current) .. "`", true)
+        end
+
+        local potPct = tonumber(itemInfo.GodpotPct)
+        if potPct then
+            local grade = tostring(itemInfo.RollGrade or "")
+            local quality = string.format("`%.1f%%`", potPct)
+            if grade ~= "" then quality = quality .. "  |  **" .. grade .. " Roll**" end
+            addField("POT Quality", quality, true)
+        elseif tostring(itemInfo.RollGrade or "") ~= "" then
+            addField("Roll Grade", "**" .. tostring(itemInfo.RollGrade) .. "**", true)
+        end
+
+        local potMin = tonumber(itemInfo.GodpotMin)
+        local potMax = tonumber(itemInfo.GodpotMax)
+        if potMin and potMax and potMax > 0 then
+            addField("POT Range", "`" .. formatCompact(potMin) .. " - " .. formatCompact(potMax) .. "`", true)
+        end
+
+        local healthPct = tonumber(itemInfo.GodpotHealthPct)
+        if healthPct then
+            addField("Health Roll", string.format("`%.1f%%`", healthPct), true)
+        end
+
+        local curUp = tonumber(itemInfo.CurrentUpgrade)
+        local maxUp = tonumber(itemInfo.MaxUpgrades)
+        if maxUp and maxUp > 0 then
+            local upPct = tonumber(itemInfo.UpgradePct) or ((curUp or 0) / maxUp * 100)
+            addField(
+                "Upgrades",
+                "`" .. tostring(math.floor(curUp or 0)) .. " / " .. tostring(math.floor(maxUp)) .. "`"
+                    .. string.format("  |  %.1f%%", upPct),
+                true
+            )
+        end
+
+        local previousBest = tonumber(itemInfo.PreviousBestPotential)
+        if previousBest and previousBest > 0 and potential and potential > previousBest then
+            local delta = potential - previousBest
+            local deltaPct = previousBest > 0 and (delta / previousBest) * 100 or 0
+            addField(
+                "Previous Best",
+                "`" .. formatCompact(previousBest) .. "`  ->  `" .. formatCompact(potential) .. "`"
+                    .. "\n**+" .. formatCompact(delta) .. "**  |  **+" .. string.format("%.2f%%", deltaPct) .. "**",
+                false
+            )
+        end
+
+        local collectionKey = tostring(itemType) .. "|" .. lower(itemName)
+        local collection = Persistent.Collection and Persistent.Collection[collectionKey] or nil
+        local collectionParts = {}
+        if itemInfo.IsNewCollection == true or eventType == "NewSpell" then
+            collectionParts[#collectionParts + 1] = "**First time obtained**"
+        end
+        if type(collection) == "table" then
+            local times = tonumber(collection.TimesObtained) or 0
+            if times > 0 then collectionParts[#collectionParts + 1] = "Owned count: `" .. tostring(times) .. "`" end
+            local bestRoll = tonumber(collection.BestGodpotPct) or 0
+            if bestRoll > 0 then collectionParts[#collectionParts + 1] = "Best recorded POT: `" .. string.format("%.1f%%", bestRoll) .. "`" end
+        end
+        if #collectionParts > 0 then
+            addField("Collection", table.concat(collectionParts, "\n"), false)
+        end
+
+        local flags = {}
+        if itemInfo.IsGodpot == true then flags[#flags + 1] = "**GODPOT**" end
+        if itemInfo.IsHighPot == true or itemInfo.IsHighPotDrop == true then flags[#flags + 1] = "**High POT**" end
+        if itemInfo.IsNewBest == true or itemInfo.IsNewBestDrop == true then flags[#flags + 1] = "**New All-Time Best**" end
+        if itemInfo.IsNewCollection == true then flags[#flags + 1] = "**New Collection Item**" end
+        if itemInfo.IsWishlist == true then flags[#flags + 1] = "**Wishlist**" end
+        if tostring(itemInfo.RollGrade or "") == "S" then flags[#flags + 1] = "**S Roll**" end
+        if #flags > 0 then
+            addField("Highlights", table.concat(flags, "  •  "), false)
+        end
+
+        local dungeonCode = tostring(itemInfo.GodpotDungeon or "")
+        if dungeonCode ~= "" then
+            addField("Dungeon Data", (dungeonNames[dungeonCode] or dungeonCode) .. "  (`" .. dungeonCode .. "`)", true)
+        end
+
+        local sellValue = tonumber(itemInfo.SellValue)
+        if sellValue and sellValue > 0 then
+            addField("Sell Value", "`" .. formatCompact(sellValue) .. "` gold", true)
+        end
+    end
+
+    local body = tostring(bodyText or "")
+    local description = ""
+    if body ~= "" then
+        description = "**Alert Details**\n" .. clip(body, 3500)
+    elseif itemName ~= "Unknown Item" then
+        description = "**" .. itemName .. "** was detected by Inventory+."
+    end
+
+    local playerLabel = "Inventory+"
+    if not (Persistent.Settings and Persistent.Settings.HideDisplayName == true) then
+        playerLabel = tostring(LocalPlayer and (LocalPlayer.DisplayName or LocalPlayer.Name) or "Player")
+    end
+
+    local footerParts = {
+        "Inventory+",
+        "Dungeon Quest Loot Tracker",
+        "Player: " .. playerLabel,
+    }
+
+    local embed = {
+        author = {name = "Inventory+  |  Dungeon Quest"},
+        title = clip(embedTitle, 256),
+        description = description ~= "" and clip(description, 4096) or nil,
+        color = style.color,
+        fields = fields,
+        footer = {text = clip(table.concat(footerParts, "  |  "), 2048)},
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ", tonumber(type(itemInfo) == "table" and itemInfo.AcquiredAt) or os.time()),
+    }
+
     local payload = HttpService:JSONEncode({
         username = "Inventory+",
-        content = title .. (body ~= "" and ("\n" .. body) or ""),
+        embeds = {embed},
+        allowed_mentions = {parse = {}},
     })
 
     local ok, response = pcall(requester, {
@@ -2611,7 +2832,7 @@ Controller.UpdateCollection = function(info, acquired)
     return isNew, entry, key
 end
 
-local function qolNotify(titleText, bodyText, webhookEvent)
+local function qolNotify(titleText, bodyText, webhookEvent, webhookInfo)
     if Persistent.Settings.DropNotifications then
         pcall(function()
             StarterGui:SetCore("SendNotification", {
@@ -2636,7 +2857,7 @@ local function qolNotify(titleText, bodyText, webhookEvent)
 
     if webhookEvent then
         task.spawn(function()
-            Controller.SendDiscordWebhook(webhookEvent, titleText, bodyText)
+            Controller.SendDiscordWebhook(webhookEvent, titleText, bodyText, webhookInfo)
         end)
     end
 end
@@ -2882,7 +3103,8 @@ local function rebuildMetrics()
                     qolNotify(
                         "New Spell Discovered",
                         tostring(info.Name) .. " - first time obtained",
-                        "NewSpell"
+                        "NewSpell",
+                        info
                     )
                     scheduleDiskStateSave(0.15)
                 end
@@ -3107,6 +3329,12 @@ local function rebuildMetrics()
                 local isHighPot = tonumber(info.GodpotPct) ~= nil
                     and tonumber(info.GodpotPct) >= highPotThreshold
 
+                info.PreviousBestPotential = previousBest
+                info.IsNewCollection = collectionWasNew
+                info.IsNewBestDrop = isNewBest
+                info.IsHighPotDrop = isHighPot
+                info.AcquiredAt = os.time()
+
                 local drop = {
                     UID = info.UID,
                     Name = info.Name,
@@ -3138,7 +3366,8 @@ local function rebuildMetrics()
                         tostring(info.Name)
                             .. " - " .. string.format("%.1f%%", info.GodpotPct or 100) .. " POT"
                             .. (isNewBest and (" - new best, previous " .. formatCompact(previousBest or 0)) or ""),
-                        "Godpot"
+                        "Godpot",
+                        info
                     )
                     if Persistent.Settings.GodpotAutoLock and info.UID then
                         Persistent.Locked[info.UID] = true
@@ -3150,7 +3379,8 @@ local function rebuildMetrics()
                             .. " - " .. string.format("%.1f%%", info.GodpotPct or 0) .. " POT"
                             .. " - " .. formatCompact(newPotential) .. " potential"
                             .. (isNewBest and (" - previous best " .. formatCompact(previousBest or 0)) or ""),
-                        "HighPot"
+                        "HighPot",
+                        info
                     )
                 elseif isNewBest and Persistent.Settings.NewBestNotifications then
                     qolNotify(
@@ -3158,16 +3388,17 @@ local function rebuildMetrics()
                         tostring(info.Name)
                             .. " - " .. formatCompact(newPotential) .. " potential"
                             .. " - previous best " .. formatCompact(previousBest or 0),
-                        "NewBest"
+                        "NewBest",
+                        info
                     )
                 elseif info.IsWishlist and Persistent.Settings.WishlistNotifications then
-                    qolNotify("Wishlist Drop", tostring(info.Name) .. " - " .. tostring(info.RollGrade or info.Rarity or "drop"), "Drop")
+                    qolNotify("Wishlist Drop", tostring(info.Name) .. " - " .. tostring(info.RollGrade or info.Rarity or "drop"), "Drop", info)
                 elseif info.RollGrade == "S" and Persistent.Settings.SRollNotifications then
-                    qolNotify("S-Roll Drop", tostring(info.Name), "Drop")
+                    qolNotify("S-Roll Drop", tostring(info.Name), "Drop", info)
                 elseif (info.RarityRank or 0) >= (RARITY_RANK.legendary or 5) and Persistent.Settings.LegendaryNotifications then
-                    qolNotify("Legendary+ Drop", tostring(info.Name), "Drop")
+                    qolNotify("Legendary+ Drop", tostring(info.Name), "Drop", info)
                 elseif improvement and Persistent.Settings.DropNotifications then
-                    qolNotify("Potential Improvement", tostring(info.Name) .. " - " .. formatCompact(info.Potential or 0), "Drop")
+                    qolNotify("Potential Improvement", tostring(info.Name) .. " - " .. formatCompact(info.Potential or 0), "Drop", info)
                 end
             end
         end
@@ -7571,7 +7802,31 @@ function QOL.testDiscordWebhook()
     local ok, detail = Controller.SendDiscordWebhook(
         "Test",
         "Inventory+ webhook test",
-        "Webhook support is working. No emoji formatting is used."
+        "Premium embed styling is working. This sample shows rarity color, POT quality, upgrades, collection status, and best-item comparison.",
+        {
+            Name = "Webhook Test Item",
+            ItemType = "weapon",
+            Class = "test",
+            Rarity = "epic",
+            Level = 190,
+            Current = 118500,
+            Potential = 123456,
+            CurrentUpgrade = 41000,
+            MaxUpgrades = 42500,
+            UpgradePct = 96.5,
+            GodpotPct = 97.5,
+            GodpotMin = 111000,
+            GodpotMax = 125000,
+            GodpotHealthPct = 96.8,
+            GodpotDungeon = "AT",
+            PreviousBestPotential = 119000,
+            IsNewBestDrop = true,
+            IsHighPotDrop = true,
+            IsNewCollection = true,
+            IsWishlist = true,
+            SellValue = 500000,
+            RollGrade = "S",
+        }
     )
     if ok then
         nativeAlert("Discord webhook test sent.")
@@ -8128,7 +8383,7 @@ function QOL.buildMorePopup(rightSide)
     numeric(loot, 12, "Capacity", "Inventory capacity fallback", "InventoryCapacity", 1, 2000)
     numeric(loot, 13, "CapacityWarn", "Capacity warning %", "InventoryWarningPct", 1, 100)
     numeric(loot, 14, "LootMilestone", "Loot milestone (0 = off)", "LootMilestone", 0, 10000)
-    QOL.makePanelLabel(loot, "WebhookHelp", "DISCORD WEBHOOK - plain text only. The URL is saved locally and excluded from settings export.", 48, 15)
+    QOL.makePanelLabel(loot, "WebhookHelp", "DISCORD WEBHOOK - premium loot embeds use rarity-colored sidebars + color emojis and include POT, upgrades, collection status, best-item comparison, dungeon data, and highlights. URL stays local and is excluded from settings export.", 48, 15)
     toggle(loot, 16, "DiscordWebhookEnabled", "Discord webhook")
     textSetting(loot, 17, "Webhook URL", "DiscordWebhookURL")
     toggle(loot, 18, "DiscordWebhookNewSpell", "Webhook: new spells")
@@ -9255,4 +9510,4 @@ print("[DQ Inventory QOL v20] ★ left-click favorite | ★ right-click lock")
 print("[DQ Inventory QOL v20] native tooltip ZIndex promotion enabled")
 print("[DQ Inventory QOL v20] More-panel overflow guard + native-style controls enabled")
 print("[DQ Inventory QOL v20] persistent collection + all-time best POT tracking enabled")
-print("[DQ Inventory QOL v20] high-POT alerts + Discord webhook support enabled")
+print("[DQ Inventory QOL v20.2] premium rarity Discord embeds enabled")
