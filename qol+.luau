@@ -123,6 +123,7 @@ if type(Persistent) ~= "table" then
             HideBadges = false,
             CompactTooltip = false,
             TooltipTextSize = 13,
+            JunkMode = "NonBest",
             KeepCopies = 1,
             ProtectSRolls = true,
             ProtectLegendary = true,
@@ -224,6 +225,7 @@ Persistent.Settings.TooltipTextSize = math.clamp(
     10,
     18
 )
+Persistent.Settings.JunkMode = (Persistent.Settings.JunkMode == "Duplicates" or Persistent.Settings.JunkMode == "NonBest") and Persistent.Settings.JunkMode or "NonBest"
 Persistent.Settings.KeepCopies = math.clamp(nonNegativeInteger and nonNegativeInteger(Persistent.Settings.KeepCopies, 1) or math.floor(tonumber(Persistent.Settings.KeepCopies) or 1), 1, 20)
 Persistent.Settings.ProtectSRolls = Persistent.Settings.ProtectSRolls ~= false
 Persistent.Settings.ProtectLegendary = Persistent.Settings.ProtectLegendary ~= false
@@ -456,6 +458,7 @@ local function loadDiskState()
     Persistent.Settings.TooltipTextSize = math.clamp(
         math.floor(tonumber(Persistent.Settings.TooltipTextSize) or 13), 10, 22
     )
+    Persistent.Settings.JunkMode = (Persistent.Settings.JunkMode == "Duplicates" or Persistent.Settings.JunkMode == "NonBest") and Persistent.Settings.JunkMode or "NonBest"
     Persistent.Settings.KeepCopies = math.clamp(math.floor(tonumber(Persistent.Settings.KeepCopies) or 1), 1, 20)
     Persistent.Settings.ProtectSRolls = Persistent.Settings.ProtectSRolls ~= false
     Persistent.Settings.ProtectLegendary = Persistent.Settings.ProtectLegendary ~= false
@@ -2030,40 +2033,6 @@ local function rebuildMetrics()
         end
     end
 
-    for _, list in pairs(junkGroups) do
-        local keepCopies = keepCopiesForName(list[1] and list[1].Name or "")
-        if #list > keepCopies then
-            table.sort(list, function(a, b)
-                if a.Potential ~= b.Potential then return a.Potential > b.Potential end
-                if a.Current ~= b.Current then return a.Current > b.Current end
-                if a.RarityRank ~= b.RarityRank then return a.RarityRank > b.RarityRank end
-                if a.Level ~= b.Level then return a.Level > b.Level end
-                return (a.ItemNumber or math.huge) < (b.ItemNumber or math.huge)
-            end)
-            local kept = {}
-            for index = 1, math.min(keepCopies, #list) do
-                kept[list[index]] = true
-            end
-            local worstCandidate = nil
-            for index = #list, 1, -1 do
-                local candidate = list[index]
-                if not kept[candidate] and not isProtectedInfo(candidate) then
-                    worstCandidate = candidate
-                    break
-                end
-            end
-            if worstCandidate then
-                worstCandidate.IsJunk = true
-                worstCandidate.JunkReason = "Outside top " .. tostring(keepCopies) .. " copies"
-            end
-        end
-    end
-
-    for _, info in ipairs(allInfos) do
-        info.ProtectionReasons = protectionReasons(info)
-        info.IsProtected = #info.ProtectionReasons > 0
-    end
-
     local function betterForMode(candidate, currentBest, mode)
         if not currentBest then
             return true
@@ -2096,18 +2065,23 @@ local function rebuildMetrics()
         Potential = {},
         Budget = {},
     }
+    local bestOverallPotential = {}
 
     for _, info in ipairs(allInfos) do
         local slot = slotForType(info.ItemType)
-        if (slot == "weapon" or slot == "chest" or slot == "helmet")
-            and info.IsEquipable
-        then
+        if slot == "weapon" or slot == "chest" or slot == "helmet" then
             local key = tostring(info.Class) .. ":" .. slot
-            for _, mode in ipairs({"Now", "Potential", "Budget"}) do
-                local currentBest = bestByMode[mode][key]
-                if betterForMode(info, currentBest, mode) then
-                    bestByMode[mode][key] = info
+            if info.IsEquipable then
+                for _, mode in ipairs({"Now", "Potential", "Budget"}) do
+                    local currentBest = bestByMode[mode][key]
+                    if betterForMode(info, currentBest, mode) then
+                        bestByMode[mode][key] = info
+                    end
                 end
+            end
+            local currOverall = bestOverallPotential[key]
+            if not currOverall or (info.Potential or 0) > (currOverall.Potential or 0) then
+                bestOverallPotential[key] = info
             end
         end
     end
@@ -2125,9 +2099,88 @@ local function rebuildMetrics()
     for _, info in pairs(bestByMode.Budget) do
         info.IsBestBudget = true
     end
+    for _, info in pairs(bestOverallPotential) do
+        info.IsBestOverallPotential = true
+    end
     if Controller.BestMode ~= "Off" then
         for _, info in pairs(bestByMode[Controller.BestMode] or {}) do
             info.IsBestLoadout = true
+        end
+    end
+
+    for _, info in ipairs(allInfos) do
+        info.ProtectionReasons = protectionReasons(info)
+        info.IsProtected = #info.ProtectionReasons > 0
+    end
+
+    local junkMode = tostring(Persistent.Settings.JunkMode or "NonBest")
+    if junkMode == "NonBest" then
+        for _, info in ipairs(allInfos) do
+            local slot = slotForType(info.ItemType)
+            if slot == "weapon" or slot == "chest" or slot == "helmet" then
+                local isBest = info.IsBestNow or info.IsBestPotential or info.IsBestBudget or info.IsBestOverallPotential
+                local isAboveLevel = (info.Level or 0) > playerLevel
+                if not info.IsProtected and not isBest and not isAboveLevel then
+                    info.IsJunk = true
+                    info.JunkReason = "Not best in slot"
+                end
+            end
+        end
+
+        for _, list in pairs(junkGroups) do
+            if list[1] and list[1].ItemType == "ability" then
+                local keepCopies = keepCopiesForName(list[1].Name or "")
+                if #list > keepCopies then
+                    table.sort(list, function(a, b)
+                        if a.Potential ~= b.Potential then return a.Potential > b.Potential end
+                        if a.Current ~= b.Current then return a.Current > b.Current end
+                        if a.RarityRank ~= b.RarityRank then return a.RarityRank > b.RarityRank end
+                        if a.Level ~= b.Level then return a.Level > b.Level end
+                        return (a.ItemNumber or math.huge) < (b.ItemNumber or math.huge)
+                    end)
+                    local kept = {}
+                    for index = 1, math.min(keepCopies, #list) do
+                        kept[list[index]] = true
+                    end
+                    for index = #list, 1, -1 do
+                        local candidate = list[index]
+                        if not kept[candidate] and not candidate.IsProtected then
+                            candidate.IsJunk = true
+                            candidate.JunkReason = "Duplicate ability outside top " .. tostring(keepCopies)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    else
+        for _, list in pairs(junkGroups) do
+            local keepCopies = keepCopiesForName(list[1] and list[1].Name or "")
+            if #list > keepCopies then
+                table.sort(list, function(a, b)
+                    if a.Potential ~= b.Potential then return a.Potential > b.Potential end
+                    if a.Current ~= b.Current then return a.Current > b.Current end
+                    if a.RarityRank ~= b.RarityRank then return a.RarityRank > b.RarityRank end
+                    if a.Level ~= b.Level then return a.Level > b.Level end
+                    return (a.ItemNumber or math.huge) < (b.ItemNumber or math.huge)
+                end)
+                local kept = {}
+                for index = 1, math.min(keepCopies, #list) do
+                    kept[list[index]] = true
+                end
+                local worstCandidate = nil
+                for index = #list, 1, -1 do
+                    local candidate = list[index]
+                    if not kept[candidate] and not isProtectedInfo(candidate) then
+                        worstCandidate = candidate
+                        break
+                    end
+                end
+                if worstCandidate then
+                    worstCandidate.IsJunk = true
+                    worstCandidate.JunkReason = "Outside top " .. tostring(keepCopies) .. " copies"
+                end
+            end
         end
     end
 
@@ -5458,6 +5511,7 @@ local function executeSellJunk(plan)
                 end
 
                 synchronizeActionCards(snapshot)
+                rebuildMetrics()
                 local fresh = buildJunkSellPlan()
 
                 if fresh.Count <= 0 then
@@ -5625,19 +5679,23 @@ local function requestAutoSellJunk()
             if nonNegativeInteger(entry.SellValue) >= highValueThreshold then highValueCount += 1 end
         end
     end
+    local isNonBest = Persistent.Settings.JunkMode == "NonBest"
     local body =
-        "Sell duplicate junk until only the best eligible copies remain?\n"
+        (isNonBest
+            and "Sell all obsolete gear until only your best and protected items remain?\n"
+            or "Sell duplicate junk until only the best eligible copies remain?\n")
         .. tostring(plan.Count)
         .. " item" .. (plan.Count == 1 and "" or "s")
-        .. " are marked in the first pass; estimated value "
-        .. formatInt(plan.TotalValue) .. ".\n"
-        .. "Keep policy: top " .. tostring(math.max(1, nonNegativeInteger(Persistent.Settings.KeepCopies, 1))) .. " copies plus protected items.\n"
-        .. "Equipped, favorites, locks, loadouts, wishlist, S-roll and Legendary+ protection rules are respected.\n"
+        .. " marked for removal; estimated value "
+        .. formatCompact(plan.TotalValue) .. " gold.\n"
+        .. (isNonBest
+            and "Mode: NOT BEST. Keeps Equipped, Best-in-Slot for all classes, Loadouts, Favorites, Locks, Wishlist, S-rolls, and Legendary+.\n"
+            or ("Mode: DUPLICATES. Keeping top " .. tostring(math.max(1, nonNegativeInteger(Persistent.Settings.KeepCopies, 1))) .. " copies plus protected items.\n"))
         .. (highValueCount > 0 and ("WARNING: " .. tostring(highValueCount) .. " marked item(s) meet the high-value warning threshold.\n") or "")
         .. (maxValue > 0
             and ("Auto-sell value ceiling: " .. formatInt(maxValue) .. ". Items above it are skipped.\n")
             or "Auto-sell value ceiling: OFF.\n")
-        .. "Stop prevents later passes; it cannot undo a sell request already sent."
+        .. "Stop prevents later passes; it cannot undo a request already sent."
 
     showConfirmation(
         "AUTO SELL ALL JUNK",
@@ -6329,9 +6387,11 @@ function QOL.cleanupPreviewText()
     local plan = buildJunkSellPlan()
     local protected = 0
     for _, info in ipairs(Controller.InventoryInfos or {}) do if info.IsProtected then protected += 1 end end
-    return "CLEANUP PREVIEW • " .. tostring(plan.Count or 0) .. " removable"
+    local isNonBest = Persistent.Settings.JunkMode == "NonBest"
+    return "CLEANUP PREVIEW • Mode: " .. (isNonBest and "Not Best" or "Duplicates")
+        .. " • " .. tostring(plan.Count or 0) .. " removable"
         .. " • est. " .. formatCompact(plan.TotalValue or 0) .. " gold"
-        .. " • default keep " .. tostring(math.max(1, nonNegativeInteger(Persistent.Settings.KeepCopies, 1)))
+        .. (isNonBest and " • all obsolete gear" or (" • keep top " .. tostring(math.max(1, nonNegativeInteger(Persistent.Settings.KeepCopies, 1)))))
         .. " • protected " .. tostring(protected)
 end
 
@@ -6485,7 +6545,7 @@ end
 QOL.PROFILE_SETTING_KEYS = {
     "SortMode", "HideCommon", "HideAbilities", "OnlyUpgradable", "OnlyEquipable", "GroupDupes", "HideJunk", "MinLevel",
     "GoldReserve", "SpendCap", "TargetUpgradePct", "UpgradeWeapon", "UpgradeChest", "UpgradeHelmet", "AutoSellMaxValue",
-    "KeepCopies", "ProtectSRolls", "ProtectLegendary", "WishlistAutoLock", "InventoryWarningPct", "MinImprovementPct",
+    "JunkMode", "KeepCopies", "ProtectSRolls", "ProtectLegendary", "WishlistAutoLock", "InventoryWarningPct", "MinImprovementPct",
     "MinImprovementFlat", "RequireBetterNow", "HighValueWarning", "HighSpendPct", "AdvancedSearch", "HideBadges",
     "CompactTooltip", "TooltipTextSize", "GridScale", "GridColumns"
 }
@@ -7033,14 +7093,20 @@ function QOL.buildMorePopup(rightSide)
 
     local protect = makePage("Protect")
     QOL.makePanelLabel(protect, "ProtectionSummary", "", 52, 1)
-    numeric(protect, 2, "KeepCopies", "Keep best copies per duplicate", "KeepCopies", 1, 20)
-    toggle(protect, 3, "ProtectSRolls", "Auto-protect S rolls")
-    toggle(protect, 4, "ProtectLegendary", "Auto-protect Legendary+")
-    toggle(protect, 5, "WishlistAutoLock", "Wishlist auto-lock")
-    numeric(protect, 6, "SellMax", "Auto-sell value ceiling (0 = off)", "AutoSellMaxValue", 0, 9e15)
-    numeric(protect, 7, "HighValue", "High-value sell warning (0 = off)", "HighValueWarning", 0, 9e15)
-    toggle(protect, 8, "AutoCleanupPrompt", "Capacity cleanup prompt")
-    local keepRuleRow = row(protect, "KeepRuleRow", 9)
+    QOL.makePanelButton(protect, "ToggleJunkMode", "", 2, function()
+        Persistent.Settings.JunkMode = Persistent.Settings.JunkMode == "NonBest" and "Duplicates" or "NonBest"
+        saveDiskState()
+        applyAll()
+        refreshMorePopup()
+    end)
+    numeric(protect, 3, "KeepCopies", "Keep copies (Duplicates mode)", "KeepCopies", 1, 20)
+    toggle(protect, 4, "ProtectSRolls", "Auto-protect S rolls")
+    toggle(protect, 5, "ProtectLegendary", "Auto-protect Legendary+")
+    toggle(protect, 6, "WishlistAutoLock", "Wishlist auto-lock")
+    numeric(protect, 7, "SellMax", "Auto-sell value ceiling (0 = off)", "AutoSellMaxValue", 0, 9e15)
+    numeric(protect, 8, "HighValue", "High-value sell warning (0 = off)", "HighValueWarning", 0, 9e15)
+    toggle(protect, 9, "AutoCleanupPrompt", "Capacity cleanup prompt")
+    local keepRuleRow = row(protect, "KeepRuleRow", 10)
     local _, keepRuleName = makeNativeInput(keepRuleRow, {Name = "KeepRuleName", Size = UDim2.new(0.53, 0, 1, 0), Text = "", Placeholder = "Per-item keep rule name", ZIndex = 96})
     local _, keepRuleCount = makeNativeInput(keepRuleRow, {Name = "KeepRuleCount", Size = UDim2.new(0.18, 0, 1, 0), Text = "2", Placeholder = "2", ZIndex = 96, TextXAlignment = Enum.TextXAlignment.Center})
     keepRuleCount.Parent.Position = UDim2.fromScale(0.55, 0)
@@ -7050,8 +7116,8 @@ function QOL.buildMorePopup(rightSide)
     clearKeepButton.AnchorPoint = Vector2.new(1, 0) clearKeepButton.Position = UDim2.fromScale(1, 0)
     addConnection(Controller.AttachConnections, setKeepButton.MouseButton1Click:Connect(function() local name = keepRuleName.Text local info = QOL.selectedMetaInfo() if name == "" and info then name = info.Name end QOL.setKeepRule(name, keepRuleCount.Text) refreshMorePopup() end))
     addConnection(Controller.AttachConnections, clearKeepButton.MouseButton1Click:Connect(function() local name = keepRuleName.Text local info = QOL.selectedMetaInfo() if name == "" and info then name = info.Name end QOL.clearKeepRule(name) refreshMorePopup() end))
-    QOL.makePanelLabel(protect, "KeepRuleList", "", 60, 10)
-    QOL.makePanelLabel(protect, "ProtectionHelp", "Smart Junk keeps the configured top copies, then also preserves every equipped, favorite, locked, loadout, wishlist, protected S-roll, and protected Legendary+ item. Protected extras can make a group retain more than the keep count.", 72, 11)
+    QOL.makePanelLabel(protect, "KeepRuleList", "", 60, 11)
+    QOL.makePanelLabel(protect, "ProtectionHelp", "JUNK MODES:\n• NOT BEST: Marks all gear as Junk unless it is Equipped, Best-in-Slot (Mage/Warrior/Tank), in a Loadout, or Protected.\n• DUPLICATES: Only marks inferior duplicate copies of the same item name.\nEquipped, Favorites, Locks, Loadouts, Wishlist, S-Rolls, and Legendary+ items are ALWAYS protected in both modes.", 84, 12)
 
     local history = makePage("History")
     QOL.makePanelLabel(history, "SessionSummary", "", 60, 1)
@@ -7170,6 +7236,15 @@ refreshMorePopup = function()
         end
     end
 
+    local junkModeBtn = popup:FindFirstChild("ToggleJunkMode", true)
+    if junkModeBtn and junkModeBtn:IsA("TextButton") then
+        local isNonBest = Persistent.Settings.JunkMode == "NonBest"
+        junkModeBtn.Text = "Junk Mode: " .. (isNonBest and "NOT BEST (Sell Obsolete)" or "DUPLICATES ONLY")
+        local face = junkModeBtn:FindFirstChild("DQInner")
+        if face then
+            setPlateColor(face, isNonBest and Color3.fromRGB(87, 112, 145) or Color3.fromRGB(72, 72, 72))
+        end
+    end
     local importMode = popup:FindFirstChild("ImportMode", true)
     if importMode and importMode:IsA("TextButton") then importMode.Text = "Import mode: " .. tostring(Persistent.Settings.ImportMode) end
     local review = popup:FindFirstChild("ToggleReview", true)
@@ -8023,17 +8098,17 @@ end
 
 task.delay(1.5, QOL.tryRunPendingAutoUpgrade)
 
-print("[DQ Inventory QOL v19.1] loaded")
-print("[DQ Inventory QOL v19.1] dungeon Auto Upgrade now queues for Lobby")
-print("[DQ Inventory QOL v19.1] place = " .. getDQPlaceName())
-print("[DQ Inventory QOL v19.1] sequential potential + truthful progress + counted upgrade plans")
-print("[DQ Inventory QOL v19.1] Auto Sell Junk now clears every duplicate layer")
-print("[DQ Inventory QOL v19.1] Smart Junk now marks only one worst duplicate")
-print("[DQ Inventory QOL v19.1] Skills category + level sorting enabled")
-print("[DQ Inventory QOL v19.1] authoritative potential + stale-card safety enabled")
-print("[DQ Inventory QOL v19.1] verified sale removals + marginal-budget Auto Upgrade enabled")
-print("[DQ Inventory QOL v19.1] batched reward refresh + O(1) efficiency math enabled")
-print("[DQ Inventory QOL v19.1] persistent UI state enabled")
-print("[DQ Inventory QOL v19.1] ★ left-click favorite | ★ right-click lock")
-print("[DQ Inventory QOL v19.1] native tooltip ZIndex promotion enabled")
-print("[DQ Inventory QOL v19.1] More-panel overflow guard + native-style controls enabled")
+print("[DQ Inventory QOL v19.2] loaded")
+print("[DQ Inventory QOL v19.2] dungeon Auto Upgrade now queues for Lobby")
+print("[DQ Inventory QOL v19.2] place = " .. getDQPlaceName())
+print("[DQ Inventory QOL v19.2] sequential potential + truthful progress + counted upgrade plans")
+print("[DQ Inventory QOL v19.2] Auto Sell Junk: Not Best (Sell Obsolete) & Duplicates modes enabled")
+print("[DQ Inventory QOL v19.2] multi-class best protection (Mage, Warrior, Tank, Loadouts, Locks)")
+print("[DQ Inventory QOL v19.2] Skills category + level sorting enabled")
+print("[DQ Inventory QOL v19.2] authoritative potential + stale-card safety enabled")
+print("[DQ Inventory QOL v19.2] verified sale removals + marginal-budget Auto Upgrade enabled")
+print("[DQ Inventory QOL v19.2] batched reward refresh + O(1) efficiency math enabled")
+print("[DQ Inventory QOL v19.2] persistent UI state enabled")
+print("[DQ Inventory QOL v19.2] ★ left-click favorite | ★ right-click lock")
+print("[DQ Inventory QOL v19.2] native tooltip ZIndex promotion enabled")
+print("[DQ Inventory QOL v19.2] More-panel overflow guard + native-style controls enabled")

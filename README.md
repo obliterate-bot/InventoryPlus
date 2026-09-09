@@ -46,6 +46,9 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/obliterate-bot/Invent
 * Auto Equip Best
 * Auto Upgrade Best
 * Smart Junk
+* Smart Junk: Not Best (Sell All Obsolete Gear) Mode
+* Smart Junk: Duplicates Only Mode
+* Multi-Class Best-in-Slot Protection (Mage, Warrior, Tank)
 * Auto Sell Junk
 * Junk-Only View
 * Named Loadout Presets
