@@ -69,6 +69,16 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/obliterate-bot/Invent
 * Duplicate Roll Grades
 * Duplicate BEST Badge
 * Duplicate Junk Explanation
+* Authoritative Godpot Database (1,428 Tiers across 381 Items)
+* True Godpot Detection (100% Max Potential Rolls)
+* True Roll Quality % Calculation
+* Golden GODPOT Card Badges
+* Tier-Matched Roll Quality Badges (S, A, B, C)
+* Automatic Godpot Junk & Sell Protection
+* Automatic S-Roll Junk & Sell Protection
+* Godpot Drop Notifications
+* Tooltip Godpot Potential Range & Dungeon Info
+* Search by Godpot (is:godpot, godpot, roll:godpot, roll>=95)
 * Favorite Items
 * Locked Items
 * Equipped Item Protection
