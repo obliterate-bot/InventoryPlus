@@ -1412,8 +1412,8 @@ local GODPOT_DATABASE = {
     ["dual toxic daggers"] = {{3610, 3990, 104500, 115500, 140600, 155400, "GH", 0, 0}, {3800, 4200, 110200, 121800, 148200, 163800, "GH", 0, 0}, {3990, 4410, 115900, 128100, 155800, 172200, "GH", 0, 0}, {4180, 4620, 121600, 134400, 163400, 180600, "GH", 0, 0}},
     ["eagle staff"] = {{256, 284, 2584, 2856, 5144, 5696, "KC", 0, 0}, {285, 315, 2850, 3150, 5700, 6300, "KC", 0, 0}, {304, 336, 3116, 3444, 6156, 6804, "KC", 0, 0}, {323, 357, 3382, 3738, 6612, 7308, "KC", 0, 0}},
     ["earth wand"] = {{163, 181, 1339, 1481, 2969, 3291, "PI", 0, 0}, {171, 189, 1425, 1575, 3135, 3465, "PI", 0, 0}, {178, 198, 1510, 1670, 3290, 3650, "PI", 0, 0}, {186, 206, 1596, 1764, 3456, 3824, "PI", 0, 0}},
-    ["eden’s reaper"] = {{0, 0, 0, 0, 0, 0, "EF", 0, 0}},
-    ["eden’s vengeance"] = {{0, 0, 0, 0, 0, 0, "EF", 0, 0}},
+    ["eden's reaper"] = {{0, 0, 0, 0, 0, 0, "EF", 0, 0}},
+    ["eden's vengeance"] = {{0, 0, 0, 0, 0, 0, "EF", 0, 0}},
     ["eldenbark"] = {{72675, 80325, 2147000, 2373000, 2873750, 3176250, "EF", 51300000, 56700000}, {77425, 85575, 2275250, 2514750, 3049500, 3370500, "EF", 55727000, 61593000}, {82175, 90825, 2403500, 2656500, 3225250, 3564750, "EF", 60154000, 66486000}, {86925, 96075, 2531750, 2798250, 3401000, 3759000, "EF", 64600000, 71400000}},
     ["eldenbark greatstaff"] = {{285000, 315000, 30020000, 33180000, 32870000, 36330000, "EF", 0, 0}},
     ["eldenbark greatsword"] = {{285000, 315000, 30020000, 33180000, 32870000, 36330000, "EF", 0, 0}},
@@ -2754,7 +2754,7 @@ local function rebuildMetrics()
                 while #Persistent.LootHistory > 100 do table.remove(Persistent.LootHistory) end
                 scheduleDiskStateSave(0.35)
                 if (info.IsGodpot or info.RollGrade == "GODPOT") and Persistent.Settings.GodpotNotifications ~= false then
-                    qolNotify("✨ GODPOT DROP! ✨", tostring(info.Name) .. " • " .. formatInt(info.Potential or 0) .. " Max Pot!")
+                    qolNotify("GODPOT DROP!", tostring(info.Name) .. " • " .. formatInt(info.Potential or 0) .. " Max Pot!")
                 elseif info.IsWishlist and Persistent.Settings.WishlistNotifications then
                     qolNotify("Wishlist Drop", tostring(info.Name) .. " • " .. tostring(info.RollGrade or info.Rarity or "drop"))
                 elseif (info.RollGrade == "S" or info.RollGrade == "GODPOT") and Persistent.Settings.SRollNotifications then
@@ -3992,7 +3992,7 @@ local function updateHoveredTooltip()
     if not Persistent.Settings.CompactTooltip and info.RollGrade then
         if info.GodpotInfo then
             local gp = info.GodpotInfo
-            local rollStr = (info.IsGodpot and "★ GODPOT ★ " or "Roll Quality: ") .. tostring(info.RollGrade)
+            local rollStr = (info.IsGodpot and "[GODPOT] " or "Roll Quality: ") .. tostring(info.RollGrade)
             if info.RollPct then
                 rollStr ..= string.format(" (%.1f%%)", info.RollPct)
             end
@@ -4031,7 +4031,7 @@ local function updateHoveredTooltip()
     end
 
     if info.UID and Persistent.Favorites[info.UID] then
-        details[#details + 1] = "★ Favorite"
+        details[#details + 1] = "Favorite"
     end
 
     if info.UID and Persistent.Locked[info.UID] then
@@ -4926,7 +4926,7 @@ local function buildFilterPopup(rightSide)
     hint.Font = Enum.Font.Highway
     hint.TextScaled = true
     hint.TextWrapped = true
-    hint.Text = "★ click = favorite   •   ★ right-click = lock"
+    hint.Text = "Click = Favorite   •   Right-click = Lock"
     hint.TextColor3 = Color3.fromRGB(210, 210, 210)
     hint.TextStrokeColor3 = Color3.new(0, 0, 0)
     hint.TextStrokeTransparency = 0
@@ -8673,6 +8673,6 @@ print("[DQ Inventory QOL v19.2] authoritative potential + stale-card safety enab
 print("[DQ Inventory QOL v19.2] verified sale removals + marginal-budget Auto Upgrade enabled")
 print("[DQ Inventory QOL v19.2] batched reward refresh + O(1) efficiency math enabled")
 print("[DQ Inventory QOL v19.2] persistent UI state enabled")
-print("[DQ Inventory QOL v19.2] ★ left-click favorite | ★ right-click lock")
+print("[DQ Inventory QOL v19.2] left-click favorite | right-click lock")
 print("[DQ Inventory QOL v19.2] native tooltip ZIndex promotion enabled")
 print("[DQ Inventory QOL v19.2] More-panel overflow guard + native-style controls enabled")

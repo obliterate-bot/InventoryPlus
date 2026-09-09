@@ -2,7 +2,7 @@
 
 Client-side inventory utility layer with a native Dungeon Quest look and advanced quality-of-life features.
 
-## 🚀 Loadstring
+## Loadstring
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/obliterate-bot/InventoryPlus/main/qol%2B.luau"))()
@@ -15,7 +15,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/obliterate-bot/Invent
 
 ---
 
-## ✨ Features
+## Features
 
 * Mage Category
 * Warrior Category
