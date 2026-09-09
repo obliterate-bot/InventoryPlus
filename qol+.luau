@@ -94,6 +94,10 @@ if type(Persistent) ~= "table" then
         NewIDs = {},
         SeenSpellNames = {},
         SeenSpellsInitialized = false,
+        Collection = {},
+        CollectionInitialized = false,
+        BestPotentialByItem = {},
+        BestPotentialInitialized = false,
         KnownInitialized = false,
         SeededKnownIDs = false,
         UIState = {
@@ -153,6 +157,15 @@ if type(Persistent) ~= "table" then
             WishlistNotifications = true,
             SRollNotifications = false,
             LegendaryNotifications = false,
+            NewBestNotifications = true,
+            HighPotNotifications = true,
+            HighPotThreshold = 95,
+            DiscordWebhookEnabled = false,
+            DiscordWebhookURL = "",
+            DiscordWebhookNewSpell = true,
+            DiscordWebhookNewBest = true,
+            DiscordWebhookHighPot = true,
+            DiscordWebhookAllDrops = false,
             AutoExportSession = false,
             ImportMode = "Replace",
             GridScale = 100,
@@ -178,6 +191,10 @@ Persistent.SettingsProfiles = type(Persistent.SettingsProfiles) == "table" and P
 Persistent.ClassProfiles = type(Persistent.ClassProfiles) == "table" and Persistent.ClassProfiles or {}
 Persistent.ItemFirstSeen = type(Persistent.ItemFirstSeen) == "table" and Persistent.ItemFirstSeen or {}
 Persistent.LootHistory = type(Persistent.LootHistory) == "table" and Persistent.LootHistory or {}
+Persistent.Collection = type(Persistent.Collection) == "table" and Persistent.Collection or {}
+Persistent.CollectionInitialized = Persistent.CollectionInitialized == true
+Persistent.BestPotentialByItem = type(Persistent.BestPotentialByItem) == "table" and Persistent.BestPotentialByItem or {}
+Persistent.BestPotentialInitialized = Persistent.BestPotentialInitialized == true
 Persistent.KnownIDs = Persistent.KnownIDs or {}
 Persistent.NewIDs = Persistent.NewIDs or {}
 Persistent.SeenSpellNames = type(Persistent.SeenSpellNames) == "table" and Persistent.SeenSpellNames or {}
@@ -263,6 +280,15 @@ Persistent.Settings.DropNotifications = Persistent.Settings.DropNotifications ~=
 Persistent.Settings.WishlistNotifications = Persistent.Settings.WishlistNotifications ~= false
 Persistent.Settings.SRollNotifications = Persistent.Settings.SRollNotifications == true
 Persistent.Settings.LegendaryNotifications = Persistent.Settings.LegendaryNotifications == true
+Persistent.Settings.NewBestNotifications = Persistent.Settings.NewBestNotifications ~= false
+Persistent.Settings.HighPotNotifications = Persistent.Settings.HighPotNotifications ~= false
+Persistent.Settings.HighPotThreshold = math.clamp(tonumber(Persistent.Settings.HighPotThreshold) or 95, 1, 100)
+Persistent.Settings.DiscordWebhookEnabled = Persistent.Settings.DiscordWebhookEnabled == true
+Persistent.Settings.DiscordWebhookURL = tostring(Persistent.Settings.DiscordWebhookURL or "")
+Persistent.Settings.DiscordWebhookNewSpell = Persistent.Settings.DiscordWebhookNewSpell ~= false
+Persistent.Settings.DiscordWebhookNewBest = Persistent.Settings.DiscordWebhookNewBest ~= false
+Persistent.Settings.DiscordWebhookHighPot = Persistent.Settings.DiscordWebhookHighPot ~= false
+Persistent.Settings.DiscordWebhookAllDrops = Persistent.Settings.DiscordWebhookAllDrops == true
 Persistent.Settings.AutoExportSession = Persistent.Settings.AutoExportSession == true
 Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Merge" or "Replace"
 Persistent.Settings.GridScale = math.clamp(tonumber(Persistent.Settings.GridScale) or 100, 70, 140)
@@ -408,6 +434,10 @@ local function loadDiskState()
     if type(data.ClassProfiles) == "table" then Persistent.ClassProfiles = data.ClassProfiles end
     if type(data.ItemFirstSeen) == "table" then Persistent.ItemFirstSeen = data.ItemFirstSeen end
     if type(data.LootHistory) == "table" then Persistent.LootHistory = data.LootHistory end
+    if type(data.Collection) == "table" then Persistent.Collection = data.Collection end
+    if data.CollectionInitialized == true then Persistent.CollectionInitialized = true end
+    if type(data.BestPotentialByItem) == "table" then Persistent.BestPotentialByItem = data.BestPotentialByItem end
+    if data.BestPotentialInitialized == true then Persistent.BestPotentialInitialized = true end
     if type(data.Settings) == "table" then
         for key, value in pairs(data.Settings) do
             Persistent.Settings[key] = value
@@ -447,6 +477,10 @@ local function loadDiskState()
     Persistent.ClassProfiles = type(Persistent.ClassProfiles) == "table" and Persistent.ClassProfiles or {}
     Persistent.ItemFirstSeen = type(Persistent.ItemFirstSeen) == "table" and Persistent.ItemFirstSeen or {}
     Persistent.LootHistory = type(Persistent.LootHistory) == "table" and Persistent.LootHistory or {}
+    Persistent.Collection = type(Persistent.Collection) == "table" and Persistent.Collection or {}
+    Persistent.CollectionInitialized = Persistent.CollectionInitialized == true
+    Persistent.BestPotentialByItem = type(Persistent.BestPotentialByItem) == "table" and Persistent.BestPotentialByItem or {}
+    Persistent.BestPotentialInitialized = Persistent.BestPotentialInitialized == true
     Persistent.SeenSpellNames = type(Persistent.SeenSpellNames) == "table" and Persistent.SeenSpellNames or {}
     Persistent.SeenSpellsInitialized = Persistent.SeenSpellsInitialized == true
     Persistent.UIState = Persistent.UIState or {
@@ -511,6 +545,15 @@ local function loadDiskState()
     Persistent.Settings.WishlistNotifications = Persistent.Settings.WishlistNotifications ~= false
     Persistent.Settings.SRollNotifications = Persistent.Settings.SRollNotifications == true
     Persistent.Settings.LegendaryNotifications = Persistent.Settings.LegendaryNotifications == true
+    Persistent.Settings.NewBestNotifications = Persistent.Settings.NewBestNotifications ~= false
+    Persistent.Settings.HighPotNotifications = Persistent.Settings.HighPotNotifications ~= false
+    Persistent.Settings.HighPotThreshold = math.clamp(tonumber(Persistent.Settings.HighPotThreshold) or 95, 1, 100)
+    Persistent.Settings.DiscordWebhookEnabled = Persistent.Settings.DiscordWebhookEnabled == true
+    Persistent.Settings.DiscordWebhookURL = tostring(Persistent.Settings.DiscordWebhookURL or "")
+    Persistent.Settings.DiscordWebhookNewSpell = Persistent.Settings.DiscordWebhookNewSpell ~= false
+    Persistent.Settings.DiscordWebhookNewBest = Persistent.Settings.DiscordWebhookNewBest ~= false
+    Persistent.Settings.DiscordWebhookHighPot = Persistent.Settings.DiscordWebhookHighPot ~= false
+    Persistent.Settings.DiscordWebhookAllDrops = Persistent.Settings.DiscordWebhookAllDrops == true
     Persistent.Settings.AutoExportSession = Persistent.Settings.AutoExportSession == true
     Persistent.Settings.ImportMode = Persistent.Settings.ImportMode == "Merge" and "Merge" or "Replace"
     Persistent.Settings.GridScale = math.clamp(tonumber(Persistent.Settings.GridScale) or 100, 70, 140)
@@ -550,6 +593,10 @@ local function saveDiskState()
         ClassProfiles = Persistent.ClassProfiles,
         ItemFirstSeen = Persistent.ItemFirstSeen,
         LootHistory = Persistent.LootHistory,
+        Collection = Persistent.Collection,
+        CollectionInitialized = Persistent.CollectionInitialized == true,
+        BestPotentialByItem = Persistent.BestPotentialByItem,
+        BestPotentialInitialized = Persistent.BestPotentialInitialized == true,
         Settings = Persistent.Settings,
         UIState = Persistent.UIState,
         KnownIDs = Persistent.KnownIDs,
@@ -2470,25 +2517,126 @@ local function keepCopiesForName(name)
     return math.max(1, math.floor(tonumber(Persistent.Settings.KeepCopies) or 1))
 end
 
-local function qolNotify(titleText, bodyText)
-    if not Persistent.Settings.DropNotifications then return end
-    pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = tostring(titleText or "Dungeon Quest QOL"),
-            Text = tostring(bodyText or ""),
-            Duration = 5,
-        })
-    end)
-    local raw = tostring(Persistent.Settings.DropSoundId or "")
-    local digits = raw:match("(%d+)")
-    if digits then
+Controller.SendDiscordWebhook = function(eventType, titleText, bodyText)
+    if not Persistent.Settings.DiscordWebhookEnabled then return false, "disabled" end
+
+    local url = tostring(Persistent.Settings.DiscordWebhookURL or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if url == "" then return false, "missing URL" end
+    if not url:match("^https://[%w%.%-]+/api/webhooks/") then return false, "invalid webhook URL" end
+
+    if eventType == "NewSpell" and not Persistent.Settings.DiscordWebhookNewSpell then return false, "event disabled" end
+    if eventType == "NewBest" and not Persistent.Settings.DiscordWebhookNewBest then return false, "event disabled" end
+    if (eventType == "HighPot" or eventType == "Godpot") and not Persistent.Settings.DiscordWebhookHighPot then return false, "event disabled" end
+    if eventType == "Drop" and not Persistent.Settings.DiscordWebhookAllDrops then return false, "event disabled" end
+
+    local requester = nil
+    if type(request) == "function" then
+        requester = request
+    elseif type(http_request) == "function" then
+        requester = http_request
+    elseif type(syn) == "table" and type(syn.request) == "function" then
+        requester = syn.request
+    end
+    if not requester then return false, "HTTP request API unavailable" end
+
+    local title = tostring(titleText or "Inventory+"):gsub("•", "-"):gsub("→", "->"):gsub("▲", "")
+    local body = tostring(bodyText or ""):gsub("•", "-"):gsub("→", "->"):gsub("▲", "")
+    local payload = HttpService:JSONEncode({
+        username = "Inventory+",
+        content = title .. (body ~= "" and ("\n" .. body) or ""),
+    })
+
+    local ok, response = pcall(requester, {
+        Url = url,
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json",
+        },
+        Body = payload,
+    })
+    if not ok then return false, tostring(response) end
+
+    local status = type(response) == "table" and tonumber(response.StatusCode or response.Status or response.status_code) or nil
+    if status and (status < 200 or status >= 300) then
+        return false, "HTTP " .. tostring(status)
+    end
+    return true, status and ("HTTP " .. tostring(status)) or "sent"
+end
+
+Controller.UpdateCollection = function(info, acquired)
+    if type(info) ~= "table" then return false, nil, nil end
+    local name = tostring(info.Name or (info.Item and info.Item.name) or "Unknown")
+    local itemType = tostring(info.ItemType or "item")
+    local key = itemType .. "|" .. lower(name)
+    local entry = Persistent.Collection[key]
+    local isNew = type(entry) ~= "table"
+
+    if isNew then
+        entry = {
+            Name = name,
+            ItemType = itemType,
+            Class = tostring(info.Class or ""),
+            FirstSeen = os.time(),
+            LastSeen = os.time(),
+            TimesObtained = 0,
+            BestPotential = 0,
+            BestGodpotPct = 0,
+            BestRarity = tostring(info.Rarity or ""),
+        }
+        Persistent.Collection[key] = entry
+    end
+
+    entry.Name = name
+    entry.ItemType = itemType
+    entry.Class = tostring(info.Class or entry.Class or "")
+    entry.LastSeen = os.time()
+
+    if acquired then
+        entry.TimesObtained = (tonumber(entry.TimesObtained) or 0) + 1
+    elseif (tonumber(entry.TimesObtained) or 0) <= 0 then
+        entry.TimesObtained = 1
+    end
+
+    local potential = tonumber(info.Potential) or 0
+    if potential > (tonumber(entry.BestPotential) or 0) then
+        entry.BestPotential = potential
+        entry.BestRarity = tostring(info.Rarity or entry.BestRarity or "")
+    end
+
+    local roll = tonumber(info.GodpotPct) or 0
+    if roll > (tonumber(entry.BestGodpotPct) or 0) then
+        entry.BestGodpotPct = roll
+    end
+
+    return isNew, entry, key
+end
+
+local function qolNotify(titleText, bodyText, webhookEvent)
+    if Persistent.Settings.DropNotifications then
         pcall(function()
-            local sound = Instance.new("Sound")
-            sound.SoundId = "rbxassetid://" .. digits
-            sound.Volume = 0.8
-            sound.Parent = SoundService
-            sound:Play()
-            game:GetService("Debris"):AddItem(sound, 8)
+            StarterGui:SetCore("SendNotification", {
+                Title = tostring(titleText or "Dungeon Quest QOL"),
+                Text = tostring(bodyText or ""),
+                Duration = 5,
+            })
+        end)
+        local raw = tostring(Persistent.Settings.DropSoundId or "")
+        local digits = raw:match("(%d+)")
+        if digits then
+            pcall(function()
+                local sound = Instance.new("Sound")
+                sound.SoundId = "rbxassetid://" .. digits
+                sound.Volume = 0.8
+                sound.Parent = SoundService
+                sound:Play()
+                game:GetService("Debris"):AddItem(sound, 8)
+            end)
+        end
+    end
+
+    if webhookEvent then
+        task.spawn(function()
+            Controller.SendDiscordWebhook(webhookEvent, titleText, bodyText)
         end)
     end
 end
@@ -2733,7 +2881,8 @@ local function rebuildMetrics()
                     Persistent.SeenSpellNames[spellKey] = true
                     qolNotify(
                         "New Spell Discovered",
-                        tostring(info.Name) .. " • first time obtained"
+                        tostring(info.Name) .. " - first time obtained",
+                        "NewSpell"
                     )
                     scheduleDiskStateSave(0.15)
                 end
@@ -2741,7 +2890,28 @@ local function rebuildMetrics()
         end
     end
 
-    
+    if not Persistent.CollectionInitialized then
+        for _, info in ipairs(allInfos) do
+            Controller.UpdateCollection(info, false)
+        end
+        Persistent.CollectionInitialized = true
+        scheduleDiskStateSave(0.20)
+    end
+
+    if not Persistent.BestPotentialInitialized then
+        for _, info in ipairs(allInfos) do
+            if info.ItemType ~= "ability" and (tonumber(info.Potential) or 0) > 0 then
+                local bestKey = tostring(info.ItemType) .. "|" .. lower(info.Name)
+                local currentBest = tonumber(Persistent.BestPotentialByItem[bestKey]) or 0
+                if (tonumber(info.Potential) or 0) > currentBest then
+                    Persistent.BestPotentialByItem[bestKey] = tonumber(info.Potential) or 0
+                end
+            end
+        end
+        Persistent.BestPotentialInitialized = true
+        scheduleDiskStateSave(0.20)
+    end
+
     local equippedInfo = {}
     for _, info in ipairs(allInfos) do
         local slot = slotForType(info.ItemType)
@@ -2915,6 +3085,28 @@ local function rebuildMetrics()
                     improvement = (info.Potential or 0) > eqPotential
                 end
 
+                local collectionWasNew = false
+                do
+                    local wasNew = Controller.UpdateCollection(info, true)
+                    collectionWasNew = wasNew == true
+                end
+
+                local bestKey = tostring(info.ItemType) .. "|" .. lower(info.Name)
+                local previousBest = tonumber(Persistent.BestPotentialByItem[bestKey])
+                local newPotential = tonumber(info.Potential) or 0
+                local isNewBest = info.ItemType ~= "ability"
+                    and previousBest ~= nil
+                    and previousBest > 0
+                    and newPotential > previousBest
+
+                if info.ItemType ~= "ability" and newPotential > (previousBest or 0) then
+                    Persistent.BestPotentialByItem[bestKey] = newPotential
+                end
+
+                local highPotThreshold = math.clamp(tonumber(Persistent.Settings.HighPotThreshold) or 95, 1, 100)
+                local isHighPot = tonumber(info.GodpotPct) ~= nil
+                    and tonumber(info.GodpotPct) >= highPotThreshold
+
                 local drop = {
                     UID = info.UID,
                     Name = info.Name,
@@ -2929,25 +3121,53 @@ local function rebuildMetrics()
                     IsWishlist = info.IsWishlist == true,
                     IsGodpot = info.IsGodpot == true,
                     GodpotPct = info.GodpotPct,
+                    IsNewCollection = collectionWasNew,
+                    IsNewBest = isNewBest,
+                    PreviousBestPotential = previousBest,
+                    IsHighPot = isHighPot,
                     AcquiredAt = os.time(),
                 }
                 Controller.SessionLootDrops[info.UID] = drop
                 table.insert(Persistent.LootHistory, 1, drop)
-                while #Persistent.LootHistory > 100 do table.remove(Persistent.LootHistory) end
+                while #Persistent.LootHistory > 500 do table.remove(Persistent.LootHistory) end
                 scheduleDiskStateSave(0.35)
+
                 if info.IsGodpot and Persistent.Settings.GodpotNotifications then
-                    qolNotify("GODPOT Drop", tostring(info.Name) .. " • " .. string.format("%.1f%%", info.GodpotPct or 100) .. " roll")
+                    qolNotify(
+                        "GODPOT Drop",
+                        tostring(info.Name)
+                            .. " - " .. string.format("%.1f%%", info.GodpotPct or 100) .. " POT"
+                            .. (isNewBest and (" - new best, previous " .. formatCompact(previousBest or 0)) or ""),
+                        "Godpot"
+                    )
                     if Persistent.Settings.GodpotAutoLock and info.UID then
                         Persistent.Locked[info.UID] = true
                     end
+                elseif isHighPot and Persistent.Settings.HighPotNotifications then
+                    qolNotify(
+                        isNewBest and "New Best High-POT Drop" or "High-POT Drop",
+                        tostring(info.Name)
+                            .. " - " .. string.format("%.1f%%", info.GodpotPct or 0) .. " POT"
+                            .. " - " .. formatCompact(newPotential) .. " potential"
+                            .. (isNewBest and (" - previous best " .. formatCompact(previousBest or 0)) or ""),
+                        "HighPot"
+                    )
+                elseif isNewBest and Persistent.Settings.NewBestNotifications then
+                    qolNotify(
+                        "New Best Drop",
+                        tostring(info.Name)
+                            .. " - " .. formatCompact(newPotential) .. " potential"
+                            .. " - previous best " .. formatCompact(previousBest or 0),
+                        "NewBest"
+                    )
                 elseif info.IsWishlist and Persistent.Settings.WishlistNotifications then
-                    qolNotify("Wishlist Drop", tostring(info.Name) .. " • " .. tostring(info.RollGrade or info.Rarity or "drop"))
+                    qolNotify("Wishlist Drop", tostring(info.Name) .. " - " .. tostring(info.RollGrade or info.Rarity or "drop"), "Drop")
                 elseif info.RollGrade == "S" and Persistent.Settings.SRollNotifications then
-                    qolNotify("S-Roll Drop", tostring(info.Name))
+                    qolNotify("S-Roll Drop", tostring(info.Name), "Drop")
                 elseif (info.RarityRank or 0) >= (RARITY_RANK.legendary or 5) and Persistent.Settings.LegendaryNotifications then
-                    qolNotify("Legendary+ Drop", tostring(info.Name))
+                    qolNotify("Legendary+ Drop", tostring(info.Name), "Drop")
                 elseif improvement and Persistent.Settings.DropNotifications then
-                    qolNotify("Potential Improvement", tostring(info.Name) .. " • " .. formatCompact(info.Potential or 0))
+                    qolNotify("Potential Improvement", tostring(info.Name) .. " - " .. formatCompact(info.Potential or 0), "Drop")
                 end
             end
         end
@@ -5930,7 +6150,7 @@ local function executeUpgradePlan(plan)
         if not ok then
             stopReason =
                 "An error stopped the action; check the native inventory before trying again."
-            warn("[DQ Inventory QOL v19.2] upgrade stopped:", err)
+            warn("[DQ Inventory QOL v20] upgrade stopped:", err)
         end
 
         if actualPurchased > 0
@@ -6353,7 +6573,7 @@ local function executeSellJunk(plan)
 
         if not ok then
             stopReason = "An error stopped selling; unconfirmed removals were not counted or retried."
-            warn("[DQ Inventory QOL v19.2] sell stopped:", err)
+            warn("[DQ Inventory QOL v20] sell stopped:", err)
         end
 
         local stopped = Controller.ActionCancelRequested
@@ -6794,9 +7014,13 @@ end
 local EXPORT_FILE = "DQ_Inventory_QOL_v19_export.json"
 
 local function buildExportPayload()
+    local exportSettingsCopy = {}
+    for key, value in pairs(Persistent.Settings) do exportSettingsCopy[key] = value end
+    exportSettingsCopy.DiscordWebhookURL = nil
+
     return {
-        Version = 19,
-        Settings = Persistent.Settings,
+        Version = 20,
+        Settings = exportSettingsCopy,
         UIState = {
             ClassFilter = Controller.ClassFilter or "",
             SearchText = tostring(Controller.SearchText or ""),
@@ -6848,6 +7072,8 @@ end
 
 local IMPORTABLE_SETTINGS = {}
 for key in pairs(Persistent.Settings) do IMPORTABLE_SETTINGS[key] = true end
+IMPORTABLE_SETTINGS.DiscordWebhookURL = nil
+IMPORTABLE_SETTINGS.DiscordWebhookEnabled = nil
 
 
 local function readImportText()
@@ -7275,15 +7501,83 @@ end
 
 function QOL.lootHistoryText()
     local lines = {"RECENT LOOT"}
-    for i = 1, math.min(10, #(Persistent.LootHistory or {})) do
+    for i = 1, math.min(12, #(Persistent.LootHistory or {})) do
         local drop = Persistent.LootHistory[i]
-        lines[#lines + 1] = os.date("%H:%M", tonumber(drop.AcquiredAt) or os.time()) .. " • " .. tostring(drop.Name)
-            .. (drop.RollGrade and (" • " .. tostring(drop.RollGrade)) or "")
-            .. (drop.IsWishlist and " • WISH" or "")
-            .. (drop.IsImprovement and " • ▲" or "")
+        lines[#lines + 1] = os.date("%H:%M", tonumber(drop.AcquiredAt) or os.time()) .. " - " .. tostring(drop.Name)
+            .. (drop.RollGrade and (" - " .. tostring(drop.RollGrade)) or "")
+            .. (drop.IsNewCollection and " - NEW ITEM" or "")
+            .. (drop.IsNewBest and " - NEW BEST" or "")
+            .. (drop.IsHighPot and (" - HIGH POT " .. string.format("%.1f%%", tonumber(drop.GodpotPct) or 0)) or "")
+            .. (drop.IsWishlist and " - WISH" or "")
+            .. (drop.IsImprovement and " - IMPROVEMENT" or "")
     end
     if #lines == 1 then lines[#lines + 1] = "No tracked drops yet." end
     return table.concat(lines, "\n")
+end
+
+function QOL.collectionText()
+    local total, weapon, armor, spells = 0, 0, 0, 0
+    local recent = {}
+    local spellNames = {}
+
+    for _, entry in pairs(Persistent.Collection or {}) do
+        if type(entry) == "table" then
+            total += 1
+            local itemType = tostring(entry.ItemType or "")
+            if itemType == "weapon" then
+                weapon += 1
+            elseif itemType == "chest" or itemType == "helmet" or itemType == "armor" then
+                armor += 1
+            elseif itemType == "ability" then
+                spells += 1
+                spellNames[#spellNames + 1] = tostring(entry.Name or "Unknown")
+            end
+            recent[#recent + 1] = entry
+        end
+    end
+
+    table.sort(spellNames, function(a, b) return lower(a) < lower(b) end)
+    table.sort(recent, function(a, b)
+        return (tonumber(a.FirstSeen) or 0) > (tonumber(b.FirstSeen) or 0)
+    end)
+
+    local lines = {
+        "COLLECTION - " .. tostring(total) .. " unique item names"
+            .. " - weapons " .. tostring(weapon)
+            .. " - armor " .. tostring(armor)
+            .. " - spells " .. tostring(spells)
+    }
+
+    if #spellNames > 0 then
+        local shown = {}
+        for i = 1, math.min(10, #spellNames) do shown[#shown + 1] = spellNames[i] end
+        lines[#lines + 1] = "Known spells: " .. table.concat(shown, ", ")
+            .. (#spellNames > #shown and (" +" .. tostring(#spellNames - #shown) .. " more") or "")
+    end
+
+    lines[#lines + 1] = "Recent discoveries:"
+    for i = 1, math.min(8, #recent) do
+        local entry = recent[i]
+        lines[#lines + 1] = os.date("%m/%d %H:%M", tonumber(entry.FirstSeen) or os.time())
+            .. " - " .. tostring(entry.Name or "Unknown")
+            .. " - best " .. formatCompact(entry.BestPotential or 0)
+            .. ((tonumber(entry.BestGodpotPct) or 0) > 0 and (" - " .. string.format("%.1f%%", entry.BestGodpotPct) .. " POT") or "")
+    end
+    if #recent == 0 then lines[#lines + 1] = "No collection data yet." end
+    return table.concat(lines, "\n")
+end
+
+function QOL.testDiscordWebhook()
+    local ok, detail = Controller.SendDiscordWebhook(
+        "Test",
+        "Inventory+ webhook test",
+        "Webhook support is working. No emoji formatting is used."
+    )
+    if ok then
+        nativeAlert("Discord webhook test sent.")
+    else
+        nativeAlert("Discord webhook test failed: " .. tostring(detail or "unknown error"))
+    end
 end
 
 function QOL.captureInventorySnapshot()
@@ -7375,7 +7669,8 @@ QOL.PROFILE_SETTING_KEYS = {
     "KeepCopies", "ProtectSRolls", "ProtectLegendary", "ProtectGodpots", "GodpotThreshold", "GodpotNotifications",
     "GodpotAutoLock", "OnlyGodpots", "HideGodpotPct", "WishlistAutoLock", "InventoryWarningPct", "MinImprovementPct",
     "MinImprovementFlat", "RequireBetterNow", "HighValueWarning", "HighSpendPct", "AdvancedSearch", "HideBadges",
-    "CompactTooltip", "TooltipTextSize", "GridScale", "GridColumns"
+    "CompactTooltip", "TooltipTextSize", "GridScale", "GridColumns", "NewBestNotifications", "HighPotNotifications",
+    "HighPotThreshold"
 }
 
 function QOL.captureProfileSettings()
@@ -7826,11 +8121,22 @@ function QOL.buildMorePopup(rightSide)
     toggle(loot, 5, "WishlistNotifications", "Wishlist notifications")
     toggle(loot, 6, "SRollNotifications", "S-roll notifications")
     toggle(loot, 7, "LegendaryNotifications", "Legendary+ notifications")
-    textSetting(loot, 8, "Drop sound asset ID", "DropSoundId")
-    numeric(loot, 9, "Capacity", "Inventory capacity fallback", "InventoryCapacity", 1, 2000)
-    numeric(loot, 10, "CapacityWarn", "Capacity warning %", "InventoryWarningPct", 1, 100)
-    numeric(loot, 11, "LootMilestone", "Loot milestone (0 = off)", "LootMilestone", 0, 10000)
-    QOL.makePanelLabel(loot, "LootHistory", "", 150, 12)
+    toggle(loot, 8, "NewBestNotifications", "New all-time best POT notifications")
+    toggle(loot, 9, "HighPotNotifications", "High-POT drop notifications")
+    numeric(loot, 10, "HighPotThreshold", "High-POT threshold %", "HighPotThreshold", 1, 100)
+    textSetting(loot, 11, "Drop sound asset ID", "DropSoundId")
+    numeric(loot, 12, "Capacity", "Inventory capacity fallback", "InventoryCapacity", 1, 2000)
+    numeric(loot, 13, "CapacityWarn", "Capacity warning %", "InventoryWarningPct", 1, 100)
+    numeric(loot, 14, "LootMilestone", "Loot milestone (0 = off)", "LootMilestone", 0, 10000)
+    QOL.makePanelLabel(loot, "WebhookHelp", "DISCORD WEBHOOK - plain text only. The URL is saved locally and excluded from settings export.", 48, 15)
+    toggle(loot, 16, "DiscordWebhookEnabled", "Discord webhook")
+    textSetting(loot, 17, "Webhook URL", "DiscordWebhookURL")
+    toggle(loot, 18, "DiscordWebhookNewSpell", "Webhook: new spells")
+    toggle(loot, 19, "DiscordWebhookNewBest", "Webhook: new best POT")
+    toggle(loot, 20, "DiscordWebhookHighPot", "Webhook: high-POT / godpot")
+    toggle(loot, 21, "DiscordWebhookAllDrops", "Webhook: all other drop alerts")
+    QOL.makePanelButton(loot, "TestDiscordWebhook", "Test Discord Webhook", 22, QOL.testDiscordWebhook)
+    QOL.makePanelLabel(loot, "LootHistory", "", 190, 23)
 
     local upgrade = makePage("Upgrade")
     QOL.makePanelLabel(upgrade, "UpgradeAnalytics", "", 115, 1)
@@ -7949,11 +8255,12 @@ function QOL.buildMorePopup(rightSide)
     local history = makePage("History")
     QOL.makePanelLabel(history, "SessionSummary", "", 60, 1)
     QOL.makePanelLabel(history, "SessionStats", "", 48, 2)
-    QOL.makePanelLabel(history, "SnapshotDiff", "", 90, 3)
-    twoButtons(history, 4, "CaptureSnapshot2", "Capture Snapshot", QOL.captureInventorySnapshot, "ExportSession", "Export Session", QOL.exportSessionSummary)
-    QOL.makePanelLabel(history, "ActionLog", "", 180, 5)
-    QOL.makePanelLabel(history, "LootHistory2", "", 170, 6)
-    toggle(history, 7, "AutoExportSession", "Auto-export summary on script stop")
+    QOL.makePanelLabel(history, "CollectionSummary", "", 220, 3)
+    QOL.makePanelLabel(history, "SnapshotDiff", "", 90, 4)
+    twoButtons(history, 5, "CaptureSnapshot2", "Capture Snapshot", QOL.captureInventorySnapshot, "ExportSession", "Export Session", QOL.exportSessionSummary)
+    QOL.makePanelLabel(history, "ActionLog", "", 180, 6)
+    QOL.makePanelLabel(history, "LootHistory2", "", 210, 7)
+    toggle(history, 8, "AutoExportSession", "Auto-export summary on script stop")
 
     local ui = makePage("UI")
     twoButtons(ui, 1, "ModeMinimal", "Minimal", function() QOL.applyUIMode("Minimal") refreshMorePopup() end, "ModeCompact", "Compact", function() QOL.applyUIMode("Compact") refreshMorePopup() end)
@@ -8021,6 +8328,7 @@ refreshMorePopup = function()
     setLabel("SessionSummary", sessionLootSummaryText())
     local stats = Controller.SessionStats or {}
     setLabel("SessionStats", "SESSION ACTIONS • equipped " .. tostring(stats.Equipped or 0) .. " • upgrades " .. tostring(stats.Upgrades or 0) .. " • upgrade gold " .. formatCompact(stats.UpgradeGold or 0) .. " • sold " .. tostring(stats.Sold or 0) .. " • sell value " .. formatCompact(stats.SellGold or 0))
+    setLabel("CollectionSummary", QOL.collectionText())
     setLabel("SnapshotDiff", QOL.snapshotDiffText())
     setLabel("ActionLog", actionLogText())
     setLabel("LootHistory2", QOL.lootHistoryText())
@@ -8051,6 +8359,9 @@ refreshMorePopup = function()
             local key = obj.Name:gsub("^Toggle_", "")
             local labels = {
                 DropNotifications = "Drop notifications", WishlistNotifications = "Wishlist notifications", SRollNotifications = "S-roll notifications", LegendaryNotifications = "Legendary+ notifications",
+                NewBestNotifications = "New all-time best POT notifications", HighPotNotifications = "High-POT drop notifications",
+                DiscordWebhookEnabled = "Discord webhook", DiscordWebhookNewSpell = "Webhook: new spells", DiscordWebhookNewBest = "Webhook: new best POT",
+                DiscordWebhookHighPot = "Webhook: high-POT / godpot", DiscordWebhookAllDrops = "Webhook: all other drop alerts",
                 AdvancedSearch = "Advanced search syntax", RequireBetterNow = "Auto Equip must also be better now", UpgradeWeapon = "Upgrade weapon", UpgradeChest = "Upgrade chest", UpgradeHelmet = "Upgrade helmet",
                 ProtectSRolls = "Auto-protect S rolls", ProtectGodpots = "Auto-protect godpots", GodpotNotifications = "Godpot drop notifications",
                 GodpotAutoLock = "Godpot auto-lock", OnlyGodpots = "Godpots only", HideGodpotPct = "Hide roll % on badges", ProtectLegendary = "Auto-protect Legendary+", WishlistAutoLock = "Wishlist auto-lock", AutoCleanupPrompt = "Capacity cleanup prompt",
@@ -8527,7 +8838,7 @@ scheduleInventoryRefresh = function(delaySeconds)
         QOL.inventoryRefreshRunning = false
 
         if not ok then
-            warn("[DQ Inventory QOL v19.2] batched refresh error:", err)
+            warn("[DQ Inventory QOL v20] batched refresh error:", err)
         end
 
         if QOL.inventoryRefreshQueued and Controller.Alive then
@@ -8775,7 +9086,7 @@ function QOL.attachInventory(gui)
     end
 
     print(string.format(
-        "[DQ Inventory QOL v19.2] attached | Mage %d | Warrior %d | Tank %d | Authoritative items %d | Native cards %d",
+        "[DQ Inventory QOL v20] attached | Mage %d | Warrior %d | Tank %d | Authoritative items %d | Native cards %d",
         counts.Mage,
         counts.Warrior,
         counts.Tank,
@@ -8804,7 +9115,7 @@ function Controller:Stop()
         ENV[CONTROLLER_KEY] = nil
     end
 
-    print("[DQ Inventory QOL v19.2] stopped")
+    print("[DQ Inventory QOL v20] stopped")
 end
 
 
@@ -8929,17 +9240,19 @@ end
 
 task.delay(1.5, QOL.tryRunPendingAutoUpgrade)
 
-print("[DQ Inventory QOL v19.2] loaded")
-print("[DQ Inventory QOL v19.2] dungeon Auto Upgrade now queues for Lobby")
-print("[DQ Inventory QOL v19.2] place = " .. getDQPlaceName())
-print("[DQ Inventory QOL v19.2] sequential potential + truthful progress + counted upgrade plans")
-print("[DQ Inventory QOL v19.2] Auto Sell Junk now clears every duplicate layer")
-print("[DQ Inventory QOL v19.2] Smart Junk now marks only one worst duplicate")
-print("[DQ Inventory QOL v19.2] Skills category + level sorting enabled")
-print("[DQ Inventory QOL v19.2] authoritative potential + stale-card safety enabled")
-print("[DQ Inventory QOL v19.2] verified sale removals + marginal-budget Auto Upgrade enabled")
-print("[DQ Inventory QOL v19.2] batched reward refresh + O(1) efficiency math enabled")
-print("[DQ Inventory QOL v19.2] persistent UI state enabled")
-print("[DQ Inventory QOL v19.2] ★ left-click favorite | ★ right-click lock")
-print("[DQ Inventory QOL v19.2] native tooltip ZIndex promotion enabled")
-print("[DQ Inventory QOL v19.2] More-panel overflow guard + native-style controls enabled")
+print("[DQ Inventory QOL v20] loaded")
+print("[DQ Inventory QOL v20] dungeon Auto Upgrade now queues for Lobby")
+print("[DQ Inventory QOL v20] place = " .. getDQPlaceName())
+print("[DQ Inventory QOL v20] sequential potential + truthful progress + counted upgrade plans")
+print("[DQ Inventory QOL v20] Auto Sell Junk now clears every duplicate layer")
+print("[DQ Inventory QOL v20] Smart Junk now marks only one worst duplicate")
+print("[DQ Inventory QOL v20] Skills category + level sorting enabled")
+print("[DQ Inventory QOL v20] authoritative potential + stale-card safety enabled")
+print("[DQ Inventory QOL v20] verified sale removals + marginal-budget Auto Upgrade enabled")
+print("[DQ Inventory QOL v20] batched reward refresh + O(1) efficiency math enabled")
+print("[DQ Inventory QOL v20] persistent UI state enabled")
+print("[DQ Inventory QOL v20] ★ left-click favorite | ★ right-click lock")
+print("[DQ Inventory QOL v20] native tooltip ZIndex promotion enabled")
+print("[DQ Inventory QOL v20] More-panel overflow guard + native-style controls enabled")
+print("[DQ Inventory QOL v20] persistent collection + all-time best POT tracking enabled")
+print("[DQ Inventory QOL v20] high-POT alerts + Discord webhook support enabled")
